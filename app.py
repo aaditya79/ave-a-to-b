@@ -73,7 +73,10 @@ def for_the_model(result: dict) -> dict:
     """route_options returns a line per segment for the map. The model only needs the numbers."""
     if "routes" not in result:
         return result
-    return {**result, "routes": {k: {f: v for f, v in r.items() if f != "line"} for k, r in result["routes"].items()}}
+    return {**result, "routes": {k: {f: v for f, v in r.items() if f not in MAP_ONLY} for k, r in result["routes"].items()}}
+
+
+MAP_ONLY = {"line", "segment_risk", "turns"}
 
 
 def edge_ids(where: str) -> str | list[str]:
@@ -97,7 +100,7 @@ def route_options(ctx: RunContextWrapper[Research], start: str, end: str) -> str
     result = tools.route_options(start, end)
     if "routes" in result:
         ctx.context.routes = result
-        ctx.context.hooks.emit({"type": "routes", "data": map_routes(result)})
+        ctx.context.hooks.emit({"type": "routes", "data": map_routes(result)})  # draw the map before research ends
     return as_text(for_the_model(result))
 
 
@@ -182,8 +185,8 @@ Rules:
   ref or edge ID you passed, and collision IDs for a hotspot, e.g. [corridor:ab12cd34] or
   [edge 42731051-9903143738-0; collisions 1f0e..., 9a3b...].
 - Give counts with their range, e.g. "38 crashes (range 26 to 50)".
-- Call a stretch dangerous only when the tool marks it above_average. Otherwise
-  describe it as within the usual range for similar streets.
+- Single out a stretch only when the tool marks it above_average, and say it "stands out compared to
+  similar streets". Don't list stretches that don't. Never use the word "dangerous".
 - Compare lane types only within similar streets. Never say painted lanes are more dangerous than no lane:
   painted lanes sit mostly on busy arterials.
 - If a tool says too_sparse_for_segment_conclusions, say the stretch is too sparse for segment-level
@@ -208,8 +211,8 @@ You study police-reported bike crashes on the routes or corridors you're given.
 You study bike lanes and street redesigns on the routes or corridors you're given.
 1. Call infrastructure_summary once per ref, all in one turn.
 2. If any lane was installed or any Street Improvement Project happened since 2021, call before_after on
-   that ref and report its finding word for word, with the counts, rates, and projects (name and year
-   only). Never say a lane worked or failed.
+   that ref. It returns one result per project: report each project's name, year, and finding word for
+   word. Never say a lane worked or failed.
 """ + RESEARCHER_RULES,
         model=RESEARCHER_MODEL, model_settings=SETTINGS, tools=[TOOLS["infrastructure_summary"], TOOLS["before_after"], TOOLS["run_sql"]]),
     "exposure": Agent(
@@ -246,7 +249,8 @@ async def research(ctx: RunContextWrapper[Research], researcher: Literal["crash"
     run.researchers += 1
     run.active += 1
     agent = RESEARCHERS[researcher].clone(name=f"{RESEARCHERS[researcher].name} {run.researchers}")
-    run.hooks.emit({"type": "researcher", "agent": agent.name, "status": "running", "task": task, "round": run.rounds})
+    run.hooks.emit({"type": "researcher", "agent": agent.name, "kind": researcher, "status": "running", "task": task,
+                    "round": run.rounds})
     try:
         prompt = f"Task: {task}\nRefs: {', '.join(refs)}"
         result = await Runner.run(agent, prompt, context=run, hooks=run.hooks, max_turns=8)
@@ -258,7 +262,7 @@ async def research(ctx: RunContextWrapper[Research], researcher: Literal["crash"
     finally:
         run.active -= 1
     run.findings.append({"agent": agent.name, "task": task, "refs": refs, "text": text})
-    run.hooks.emit({"type": "researcher", "agent": agent.name, "status": status, "summary": text[:400]})
+    run.hooks.emit({"type": "researcher", "agent": agent.name, "kind": researcher, "status": status, "text": text})
     return text
 
 
@@ -269,8 +273,10 @@ lead = Agent(
     instructions=f"""\
 You lead a team that compares bike commute routes in New York City for safety.
 
-1. Check the question. If it doesn't name both a start and an end place, reply with exactly one line:
+1. Check the question. If it doesn't name both a start and an end place, reply with exactly two lines:
    CLARIFY: <one short question asking for the start, the end, and the time of day they ride>
+   OPTIONS: <two or three example replies a rider could tap, separated by " | ", each a full trip with
+   a time, built from places in their question, e.g. "From Park Slope to DUMBO, around 8am">
    Call no tools in that case. Example: "Is biking in Brooklyn safe?" needs a clarifying question.
 2. Call route_options with the start and end. If it returns no_route or an error you can't fix, reply DONE.
 3. In ONE turn, call research several times so the researchers work in parallel:
@@ -287,50 +293,56 @@ You lead a team that compares bike commute routes in New York City for safety.
     model=MODEL, model_settings=SETTINGS, tools=[route_options, research],
 )
 
-# --- The Writer: one answer from the routes and the findings ---
+# --- The Writer: the recommendation, as sentences that each carry their sources ---
+
+
+class Sentence(BaseModel):
+    text: str  # plain English, no IDs or brackets
+    sources: list[str]  # "route:ab12cd34", "corridor:ab12cd34", "edge 4273-9903-0", "collision 1f0e..."
+
+
+class Answer(BaseModel):
+    summary: list[Sentence]
+    tradeoff: list[Sentence]
+    notes: list[Sentence]
+
 
 WRITER_RULES = """\
-Write the answer in markdown for a New York cyclist choosing a commute. Use only the numbers in the
-route options and findings you're given.
+You write the recommendation for a New York cyclist choosing between bike routes. Use only the numbers in
+the route options, standout stretches, before/after results, and findings you're given. Other parts of
+the page already show the route table, the standout stretches, each project's before/after result, and
+the limits, so you write only these parts:
 
-Structure:
-1. **Recommendation** (2 to 4 sentences). Name routes by their main streets. Follow safety_label exactly:
-   - safest: call that route "the safest of these three routes" (always that phrase, never "the
-     safest route" alone, since it only beats the other two), and say how much time it adds.
-   - about_equally_safe: say the routes in routes_about_equally_safe are about equally safe and
-     recommend recommended_route, the faster of them. Don't call any route safest.
-   Routes with the same route_ref are one route: say so instead of describing it twice.
-   - depends_on_assumption: say which route has lower risk depends on an assumption about where people
-     ride that the data can't settle. Lay out the tradeoff and don't call any route safest.
-2. **Time versus safety**: a small markdown table, one row per distinct route: minutes, extra minutes
-   per day for a round trip (extra minutes × 2), and risk relative to the fastest at the half, assumed,
-   and double rider-share settings (e.g. "38% lower"). One sentence after it on the tradeoff in daily
-   terms. Never a rate.
-3. **Hotspots**: up to 3 segments, each with its crash count and range since 2021, main cause, edge ID,
-   and two collision IDs. Call one dangerous only if its findings say it is above average; otherwise
-   say it is within the usual range for similar streets.
-4. **Bike lanes and redesigns**: each before/after finding word for word, then its counts in plain words,
-   e.g. "41 crashes before (range 28 to 54) and 29 after (range 18 to 40)", and its projects by name and
-   year.
-5. **Limits**: always include these points:
-   - Police-reported crashes only, so this is serious crash risk, not every incident.
-   - Citi Bike trips set the rider estimate and don't cover all riders; say if an answer is lower
-     confidence because a route has miles without Citi Bike coverage.
-   - These are not personal odds, and a before/after change doesn't prove a lane caused it.
-   - If the data is too sparse for segment-level conclusions, say so and give the route-level
-     comparison only.
+Keep every sentence under 25 words.
 
-Citations: end each sentence, bullet, or table row that has numbers with their source in brackets: the
-route_ref, corridor_ref, or edge ID, plus collision IDs for crashes, e.g. [route:ab12cd34] or
-[edge 4273-9903-0; collisions 1f0e..., 9a3b...]. Don't repeat a citation after each number in the same
-sentence. Every number must be covered by a citation. Never give per-rider rates or a rider's odds.
-Never say a lane worked or failed. Never say painted lanes are more dangerous than no lane: compare lane
-types only within similar streets. If there is no route and the note mentions the Staten Island Ferry,
-explain that option. Write plain, short sentences."""
+summary: 2 or 3 short sentences. Name the route to take by its label and its two streets exactly as in
+  route names (never list more streets), e.g. "Take the Balanced route via Columbus Avenue and 7th Avenue. It adds 3.5
+  minutes each way and has about 62% lower estimated crash risk than the Fastest route." Follow
+  safety_label:
+  - safest: call that route "the safest of these three routes", never just "the safest route".
+  - about_equally_safe: say the routes in routes_about_equally_safe are about equally safe, and
+    recommend recommended_route because it is faster. Don't call any route safest.
+  - depends_on_assumption: say which route has lower risk depends on assumptions about where people
+    ride that the data can't settle. Give the tradeoff. Don't recommend a route or call one safest.
+  Use the risk at the assumed setting. Routes with the same route_ref are one route.
+tradeoff: 1 or 2 sentences on time versus safety in daily terms: extra minutes per day for a round
+  trip (extra minutes × 2) against the change in risk. Say the risk is lower at the half and double
+  settings too only if it is.
+notes: up to 4 short sentences with other useful findings for this rider, such as the main crash causes
+  at their time of day, the miles on protected lanes, blocked-bike-lane complaints, or lower confidence
+  where Citi Bike data doesn't cover a route. Skip what the other parts already show. Can be empty.
+If there is no route, put the explanation in summary (mention the Staten Island Ferry if the note does)
+and leave tradeoff and notes empty.
+
+Every sentence has text and sources. text is plain English with no IDs, refs, or brackets. sources lists
+where its numbers come from, e.g. "route:ab12cd34", "corridor:ab12cd34", "edge 4273-9903-0", or
+"collision 1f0e...". A sentence with a number needs at least one source.
+Never: per-rider rates or personal odds; the word "dangerous"; a lane that "worked" or "failed"; painted
+lanes called more dangerous than no lane (compare lane types only within similar streets)."""
 
 # Default reasoning spent 16,000 thinking tokens and up to 150 s on one answer; low writes the same answer in about 20 s.
 WRITER_SETTINGS = SETTINGS.resolve(ModelSettings(extra_args={**SETTINGS.extra_args, "reasoning_effort": "low"}))
-writer = Agent(name="Writer", instructions=WRITER_RULES, model=MODEL, model_settings=WRITER_SETTINGS)
+writer = Agent(name="Writer", instructions=WRITER_RULES, model=MODEL, model_settings=WRITER_SETTINGS, output_type=Answer)
 
 
 # --- The Verifier: re-runs the tools for every number the Writer cites ---
@@ -344,16 +356,17 @@ class Check(BaseModel):
 verifier = Agent(
     name="Verifier",
     instructions="""\
-You check a draft answer about bike routes against fresh tool results. The code has already re-run every
-tool call behind the refs and edge IDs the draft cites; their results follow the draft. The route options
-cover minutes and relative risks. Compare every number in the draft with them: crash counts, ranges,
-minutes, relative risks, project counts and years, before/after results.
+You check the Writer's sentences in a bike route answer against fresh tool results. Each sentence ends
+with its sources in brackets. The code has already re-run every tool call behind the refs and edge IDs
+cited; their results follow the draft. The route options cover minutes and relative risks. Compare every
+number in the sentences with them: crash counts, ranges, minutes, relative risks, project counts and
+years. The route table, standout stretches, before/after results, and limits are built by code from the
+same tools, so don't check those.
 
-Also flag: a number with no citation, a number that no result supports, a stretch called dangerous that
-the results don't mark above average, a lane said to have worked or failed, a per-rider rate or personal
-odds, painted lanes called more dangerous than no lane, a route called safest when safety_label isn't
-'safest', a route called safest without the words "of these three routes", a before/after finding not
-quoted as written, or a missing limits section.
+Also flag: a number with no source, a number that no result supports, the word "dangerous", a lane said
+to have worked or failed, a per-rider rate or personal odds, painted lanes called more dangerous than no
+lane, a route called safest when safety_label isn't 'safest', a route called safest without the words
+"of these three routes", or a recommendation that doesn't follow safety_label.
 
 Return ok=true with no problems if everything matches. Otherwise list each problem in one line: what the
 draft says, what the results say, and the fix.""",
@@ -412,6 +425,16 @@ def route_brief(routes: dict | None) -> str:
     return json.dumps(for_the_model(routes), default=str) if routes else "No routes were found."
 
 
+def parse_clarify(text: str) -> dict:
+    question, options = text, []
+    for line in text.splitlines():
+        if line.startswith("CLARIFY:"):
+            question = line.removeprefix("CLARIFY:").strip()
+        elif line.startswith("OPTIONS:"):
+            options = [o.strip() for o in line.removeprefix("OPTIONS:").split("|") if o.strip()][:3]
+    return {"response": question, "clarify": True, "options": options, "answer": None, "map": None}
+
+
 async def answer(question: str, hooks: TraceHooks) -> dict:
     run = Research(hooks=hooks)
     started = time.monotonic()
@@ -423,23 +446,31 @@ async def answer(question: str, hooks: TraceHooks) -> dict:
     except asyncio.TimeoutError:
         lead_said = "DONE"  # out of time: write with what came back
     if lead_said.startswith("CLARIFY:"):
-        return {"response": lead_said.removeprefix("CLARIFY:").strip(), "clarify": True, "map": None}
-    if run.routes is None and not run.findings:
-        # No route: the Lead's own reply, or the tool's note, is the answer
+        return parse_clarify(lead_said)
+    if run.routes is None:
+        # No route: the tool's note (or the Lead's reply) is all there is to explain
         notes = [c["result"] for c in hooks.tool_calls if c["name"] == "route_options"]
         prompt = f"Question: {question}\n\nRoute search result:\n{notes[-1] if notes else lead_said}"
-        report = await Runner.run(writer, prompt, hooks=hooks)
-        return {"response": str(report.final_output), "clarify": False, "map": None}
+        written = (await Runner.run(writer, prompt, hooks=hooks)).final_output
+        return {"response": " ".join(x.text for x in written.summary), "clarify": False, "answer": written.model_dump(), "map": None}
 
-    # 2. Write: one call. The Writer sees only the question, the routes, and the findings.
+    # 2. The exact parts come from code: standout stretches and per-project before/after, across all routes
+    facts = page_facts(run, hooks)
+
+    # 3. Write: one call. The Writer sees only the question, the routes, the facts, and the findings.
     findings = "\n\n---\n\n".join(f"{f['agent']} (task: {f['task']}; refs: {', '.join(f['refs'])})\n{f['text']}" for f in run.findings)
-    material = f"Question: {question}\n\nRoute options:\n{route_brief(run.routes)}\n\nFindings:\n\n{findings or 'None came back.'}"
-    draft = str((await Runner.run(writer, material, hooks=hooks)).final_output)
+    names = {k: f"the {LABELS[k]} route via {r['via']}" for k, r in map_routes(run.routes)["routes"].items()}
+    material = (f"Question: {question}\n\nRoute names: {json.dumps(names)}\n\nRoute options:\n{route_brief(run.routes)}\n\n"
+                f"Standout stretches (shown to the rider as a numbered list):\n{json.dumps(facts['hotspots_for_writer'])}\n\n"
+                f"Before/after results (shown as cards):\n{json.dumps(facts['before_after_for_writer'])}\n\n"
+                f"Findings:\n\n{findings or 'None came back.'}")
+    written = (await Runner.run(writer, material, hooks=hooks)).final_output
 
-    # 3. Verify, then fix once
+    # 4. Verify, then fix once
     check = None
     try:
         hooks.activity("Verifier", "started")
+        draft = render_sentences(written)
         fresh = recheck(draft, hooks)
         prompt = f"Route options:\n{route_brief(run.routes)}\n\nDraft:\n{draft}\n\nFresh tool results:\n\n{fresh}"
         verified = await asyncio.wait_for(Runner.run(verifier, prompt, hooks=hooks, max_turns=2), VERIFY_SECONDS)
@@ -447,50 +478,136 @@ async def answer(question: str, hooks: TraceHooks) -> dict:
     except Exception as e:  # out of time or a bad reply: say the check didn't finish, don't block the answer
         hooks.activity("Verifier", f"could not finish: {type(e).__name__}")
     late = time.monotonic() - started > FIX_DEADLINE_SECONDS
+    unverified = None
     if check is not None and not check.ok and check.problems and late:
-        # No time for a rewrite: show the flags rather than hide them
-        draft += "\n\n**The number check flagged these points:**\n" + "\n".join(f"- {p}" for p in check.problems)
+        unverified = check.problems  # no time for a rewrite: show the flags rather than hide them
     elif check is not None and not check.ok and check.problems:
         problems = "\n".join(f"- {p}" for p in check.problems)
-        fix = f"{material}\n\nYour draft:\n{draft}\n\nA verifier re-ran the tools and found these problems. Fix them and return the full corrected answer:\n{problems}"
-        draft = str((await Runner.run(writer, fix, hooks=hooks)).final_output)
-    if check is None:
-        draft += "\n\n_The automatic number check did not finish in time for this answer._"
+        fix = (f"{material}\n\nYour answer:\n{written.model_dump_json()}\n\nA verifier re-ran the tools and found "
+               f"these problems. Fix them and return the full corrected answer:\n{problems}")
+        written = (await Runner.run(writer, fix, hooks=hooks)).final_output
     hooks.activity("Pipeline", f"finished in {time.monotonic() - started:.0f} s")
-    verification = check.model_dump() if check is not None else None
-    return {"response": draft, "clarify": False, "map": map_data(run), "verification": verification}
+    map_ = {**map_routes(run.routes), "hotspots": facts["hotspots"], "before_after": facts["before_after"]}
+    return {"response": render_markdown(written, map_, unverified, check is None), "clarify": False,
+            "answer": written.model_dump(), "map": map_, "unverified": unverified,
+            "verification": check.model_dump() if check is not None else None}
 
 
-# --- Map data for the page ---
+# --- The parts of the answer that come from code ---
+
+LABELS = {"fastest": "Fastest", "balanced": "Balanced", "lowest_risk": "Lowest risk"}
+
+
+def route_edges(routes: dict) -> dict[str, list[str]]:
+    return {name: tools.resolve(r["route_ref"]) for name, r in routes["routes"].items()}
+
+
+def page_facts(run: Research, hooks: TraceHooks) -> dict:
+    """Standout stretches and per-project before/after across all routes, each recorded in the trace."""
+    by_route = route_edges(run.routes)
+    every = list(dict.fromkeys(e for ids in by_route.values() for e in ids))
+    standout = tools.standout_segments(every)
+    hooks.record("Pipeline", "standout_segments", {"where": "all routes"}, json.dumps(standout))
+    changes = tools.before_after(every)
+    hooks.record("Pipeline", "before_after", {"where": "all routes"}, json.dumps(changes))
+    hotspots = standout.get("hotspots", [])
+    for spot in hotspots:
+        spot["routes"] = [LABELS[n] for n, ids in by_route.items() if spot["edge_id"] in ids]
+    projects = changes.get("results", [])
+    treated = tools.treated.assign(name=[tools._project_name(p, e) for p, e in zip(tools.treated.project, tools.treated.edge_id)])
+    for result in projects:
+        project_edges = set(treated[treated.name == result["project"]].edge_id)
+        result["routes"] = [LABELS[n] for n, ids in by_route.items() if project_edges & set(ids)]
+        result["route_refs"] = [run.routes["routes"][n]["route_ref"] for n, ids in by_route.items() if project_edges & set(ids)]
+    return {"hotspots": hotspots, "before_after": projects,
+            "hotspots_for_writer": [{k: h[k] for k in ("number", "street", "crashes", "main_cause", "routes")} for h in hotspots],
+            "before_after_for_writer": [{k: r[k] for k in ("project", "year", "kind", "finding", "routes")} for r in projects if not r["too_sparse"]]}
+
+
+def via(route: dict, others: list[dict]) -> str:
+    """Two named streets that set this route apart: the longest ones some other route doesn't use."""
+    names = list(dict.fromkeys(c["street"] for c in sorted(route["corridors"], key=lambda c: -c["miles"]) if c["street"] != "unnamed path"))
+    other_streets = [{c["street"] for c in o["corridors"]} for o in others if o["route_ref"] != route["route_ref"]]
+    # names is longest first; a stable sort by how many other routes lack each street keeps that order within ties
+    ranked = sorted(names, key=lambda n: -sum(n not in streets for streets in other_streets))
+    return " and ".join(ranked[:2])
 
 
 def map_routes(routes: dict) -> dict:
     return {"start": routes["start"], "end": routes["end"], "safety_label": routes["safety_label"],
-            "recommended_route": routes["recommended_route"],
-            "routes": {k: {"line": r["line"], "minutes": r["minutes"], "miles": r["miles"],
-                           "relative_risk_vs_fastest": r["relative_risk_vs_fastest"], "route_ref": r["route_ref"]}
-                       for k, r in routes["routes"].items()}}
+            "recommended_route": routes["recommended_route"], "routes_about_equally_safe": routes["routes_about_equally_safe"],
+            "routes": {k: {"label": LABELS[k], "via": via(r, list(routes["routes"].values())), **{f: r[f] for f in (
+                "line", "segment_risk", "turns", "minutes", "miles", "extra_minutes_vs_fastest", "relative_risk_vs_fastest",
+                "route_ref", "miles_by_lane", "lower_confidence", "crashes_5yr", "corridors")}}
+                for k, r in routes["routes"].items()}}
 
 
-def map_data(run: Research) -> dict | None:
-    if run.routes is None:
-        return None
-    hotspots, before_after_rows = {}, []
-    for call in run.hooks.tool_calls:
-        try:
-            result = json.loads(call["result"])
-        except ValueError:
+def cite(sources: list[str]) -> str:
+    return f" [{'; '.join(sources)}]" if sources else ""
+
+
+def render_sentences(written: Answer) -> str:
+    parts = []
+    for section, sentences in (("Recommendation", written.summary), ("Time versus safety", written.tradeoff), ("Other findings", written.notes)):
+        if sentences:
+            parts.append(f"### {section}\n\n" + " ".join(f"{x.text}{cite(x.sources)}" for x in sentences))
+    return "\n\n".join(parts)
+
+
+def pct(relative: float) -> str:
+    change = round((1 - relative) * 100)
+    return "same" if change == 0 else f"{abs(change)}% {'lower' if change > 0 else 'higher'}"
+
+
+def render_markdown(written: Answer, map_: dict, unverified: list[str] | None, unchecked: bool) -> str:
+    """The full answer for /chat, with every citation in brackets."""
+    seen, rows = set(), []
+    for name, r in map_["routes"].items():
+        if r["route_ref"] in seen:
             continue
-        for spot in result.get("hotspots", []):
-            if spot["edge_id"] not in hotspots:
-                hotspots[spot["edge_id"]] = {**{k: spot[k] for k in ("edge_id", "street", "crashes", "main_cause", "above_average")},
-                                             **tools.edge_point(spot["edge_id"])}
-        for row in result.get("results", []):
-            if "rate_before" in row:
-                before_after_rows.append({k: row.get(k) for k in ("treatment", "rate_before", "rate_after", "comparison_rate_before",
-                                                                   "comparison_rate_after", "finding", "segments", "miles")})
-    unique = {json.dumps(r, sort_keys=True): r for r in before_after_rows}
-    return {**map_routes(run.routes), "hotspots": list(hotspots.values()), "before_after": list(unique.values())}
+        seen.add(r["route_ref"])
+        names = " / ".join(LABELS[n] for n, x in map_["routes"].items() if x["route_ref"] == r["route_ref"])
+        risk = r["relative_risk_vs_fastest"]
+        compared = "baseline" if name == "fastest" else f"{pct(risk['assumed'])} ({pct(risk['half'])} to {pct(risk['double'])})"
+        rows.append(f"| {names} (via {r['via']}) | {r['minutes']} | {round(r['extra_minutes_vs_fastest'] * 2, 1)} | "
+                    f"{compared} | [{r['route_ref']}] |")
+    table = ("| Route | Minutes | Extra minutes a day, round trip | Risk vs. Fastest (assumed; half to double) | Source |\n"
+             "|---|---:|---:|---|---|\n" + "\n".join(rows))
+    spots = [f"{h['number']}. {h['street']}: {h['crashes']['n']} crashes since 2021 (range {h['crashes']['low']} to "
+             f"{h['crashes']['high']}), against about {h['similar_streets_expected']} on similar streets. Main cause: "
+             f"{h['main_cause'] or 'not recorded'}. It stands out compared to similar streets. "
+             f"[edge {h['edge_id']}; collisions {', '.join(h['collision_ids'][:3])}]" for h in map_["hotspots"]]
+    spots = spots or ["No single stretch stands out from similar streets."]
+    changes = [f"- {r['project']} ({r['year']}, {r['kind']}): {r['finding']}{cite(r['route_refs'])}"
+               for r in map_["before_after"] if not r["too_sparse"]]
+    sparse = sum(r["too_sparse"] for r in map_["before_after"])
+    if sparse:
+        changes.append(f"- {sparse} more project{'s' if sparse > 1 else ''} had too few crashes to compare before and after.")
+    changes = changes or ["- No lane or project on these routes since 2021 can be compared before and after."]
+    parts = [render_sentences(Answer(summary=written.summary, tradeoff=[], notes=[])),
+             f"### Time versus safety\n\n{table}\n\n" + " ".join(f"{x.text}{cite(x.sources)}" for x in written.tradeoff),
+             "### Stretches that stand out\n\n" + "\n".join(spots),
+             "### Bike lanes and redesigns\n\n" + "\n".join(changes)]
+    if written.notes:
+        parts.append("### Other findings\n\n" + " ".join(f"{x.text}{cite(x.sources)}" for x in written.notes))
+    parts.append("### Limits\n\n" + "\n".join(f"- {line}" for line in limits(map_)))
+    if unverified:
+        parts.append("**The number check flagged these points, and there was no time to fix them:**\n" + "\n".join(f"- {p}" for p in unverified))
+    if unchecked:
+        parts.append("_The automatic number check did not finish in time for this answer._")
+    return "\n\n".join(parts)
+
+
+def limits(map_: dict) -> list[str]:
+    lines = ["Police-reported crashes only, so this measures serious crash risk, not every incident.",
+             "Rider counts come from Citi Bike trips and a few city counters, so they don't cover every rider."]
+    unsure = [r["label"] for r in map_["routes"].values() if r["lower_confidence"]]
+    if unsure:
+        lines.append(f"Part of the {', '.join(dict.fromkeys(unsure))} route has no Citi Bike data nearby, so its estimate is lower confidence.")
+    lines.append("These are not personal odds. A change before and after a new lane doesn't prove the lane caused it.")
+    if all(r["crashes_5yr"]["n"] < tools.SPARSE_CRASHES for r in map_["routes"].values()):
+        lines.append("Too few crashes for conclusions about single stretches, so compare the routes as a whole.")
+    return lines
 
 
 # --- FastAPI app ---
@@ -577,6 +694,7 @@ async def chat(request: ChatRequest, http: Request):
         # Auth, quota, a model that won't stop: say so as the reply, like any other answer
         result = {"response": f"Something went wrong on our side ({type(e).__name__}: {str(e)[:300]}). Please try again."}
     return {"response": result["response"], "session_id": session_id, "tool_calls": hooks.tool_calls,
+            "answer": result.get("answer"), "clarify": result.get("clarify", False), "options": result.get("options", []),
             "map": result.get("map"), "verification": result.get("verification")}
 
 
@@ -619,7 +737,7 @@ async def run(message: str, http: Request, session_id: str | None = None):
 def route(start: str, end: str, lam: float):
     """One route for the λ slider: 0 is the fastest, higher trades minutes for lower risk."""
     result = tools.route_for_lambda(start, end, max(0.0, min(lam, 20.0)))
-    return {k: result[k] for k in ("line", "minutes", "miles", "relative_risk_vs_fastest", "error", "next_step") if k in result}
+    return {k: result[k] for k in ("line", "turns", "minutes", "miles", "relative_risk_vs_fastest", "error", "next_step") if k in result}
 
 
 if __name__ == "__main__":

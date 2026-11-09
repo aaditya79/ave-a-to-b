@@ -46,7 +46,7 @@ def test_three_routes_trade_time_for_risk(trip):
 
 def test_every_trip_gets_one_of_three_labels(trip):
     assert trip["safety_label"] in tools.LABEL_NOTES
-    assert ("safest" in trip["routes"]) == (trip["safety_label"] == "safest")
+    assert list(trip["routes"]) == ["fastest", "balanced", "lowest_risk"]
     if trip["safety_label"] == "depends_on_assumption":
         assert trip["recommended_route"] is None
     else:
@@ -172,18 +172,35 @@ def test_before_after_wording_never_claims_a_cause():
     result = tools.before_after(busiest)
     text = str(result).lower().replace("never say a lane worked or failed", "")
     assert "worked" not in text and "failed" not in text
-    finding = next(r for r in result["results"] if r["treatment"] == "lane: protected")["finding"]
-    assert "can't tell whether risk per rider changed" in finding
+    for r in result["results"]:
+        assert "changed risk per rider" in r["finding"] or r["finding"].startswith("Too few")
 
 
-def test_before_after_says_fell_only_when_the_range_is_below_one():
-    def row(pre, post):
+def test_before_after_states_the_raw_change_then_the_comparison():
+    def row(pre, post, control_post=1.0):
         return pd.DataFrame({"edge_id": ["x"], "crashes_pre": [pre], "crashes_post": [post], "length_mi": [1.0], "pre_years": [2.0],
-                             "post_years": [2.0], "control_pre_rate": [1.0], "control_post_rate": [1.0]})
-    assert tools._did(row(100, 20))["finding"].startswith("Crash counts fell")
-    assert tools._did(row(100, 110))["finding"].startswith("Crash counts did not fall")
-    assert tools._did(row(2, 1))["finding"].startswith("Too few")
-    assert tools._did(row(5, 0))["too_sparse"] is True
+                             "post_years": [2.0], "control_pre_rate": [1.0], "control_post_rate": [control_post]})
+    big_drop = tools._did(row(100, 20), "lane")["finding"]
+    assert big_drop.startswith("Crashes fell from 50.0 to 10.0 a year, a bigger drop than on similar streets")
+    both_fell = tools._did(row(100, 80, control_post=0.8), "lane")["finding"]
+    assert both_fell.startswith("Crashes fell from 50.0 to 40.0 a year, but similar streets that weren't changed fell by about as much")
+    rose = tools._did(row(100, 110), "lane")["finding"]
+    assert rose.startswith("Crashes rose from 50.0 to 55.0 a year")
+    for text in (big_drop, both_fell, rose):
+        assert "did not fall" not in text and "can't tell whether the lane changed risk per rider" in text
+    assert tools._did(row(2, 1), "lane")["finding"].startswith("Too few")
+    assert tools._did(row(5, 0), "lane")["too_sparse"] is True
+
+
+def test_standouts_have_their_whole_range_above_similar_streets(trip):
+    ids = [e for r in trip["routes"].values() for e in tools.resolve(r["route_ref"])]
+    result = tools.standout_segments(ids)
+    assert len(result["hotspots"]) <= 5
+    for spot in result["hotspots"]:
+        assert spot["crashes"]["low"] > spot["similar_streets_expected"]
+    assert [s["number"] for s in result["hotspots"]] == list(range(1, len(result["hotspots"]) + 1))
+    quiet = tools.edges[tools.edges.crashes == 0].index[:20].tolist()
+    assert tools.standout_segments(quiet)["finding"] == "No single stretch stands out from similar streets."
 
 
 def test_no_treated_segments():
@@ -246,8 +263,7 @@ def test_time_filters_never_change_the_average_check(trip):
 def test_projects_have_names_not_record_numbers(trip):
     for route in trip["routes"].values():
         for result in tools.before_after(route["route_ref"]).get("results", []):
-            for project in result["projects"]:
-                assert "bike route" not in project["project"] and not project["project"].startswith("sip-")
+            assert "bike route" not in result["project"] and not result["project"].startswith("sip-")
 
 
 def test_one_segment_gets_the_same_verdict_both_ways(trip):

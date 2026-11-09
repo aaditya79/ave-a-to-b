@@ -4,476 +4,892 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Ave A to B</title>
+        <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d9488'/%3E%3Ctext x='16' y='21' font-family='sans-serif' font-size='13' font-weight='700' fill='white' text-anchor='middle'%3EAB%3C/text%3E%3C/svg%3E" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
         <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
         <style>
             :root {
-                --bg: #f6f6f3;
+                --bg: #f4f6f7;
                 --card: #ffffff;
-                --text: #1c1c1a;
-                --muted: #6b6b66;
-                --line: #e2e1dc;
-                --accent: #1f6feb;
-                --low: #1a9e77;
-                --mid: #d39b00;
-                --high: #d1495b;
-                --slider: #7a4fd6;
-            }
-            @media (prefers-color-scheme: dark) {
-                :root {
-                    --bg: #151514;
-                    --card: #1f1f1d;
-                    --text: #ecebe6;
-                    --muted: #a3a29b;
-                    --line: #34332f;
-                    --accent: #58a6ff;
-                }
+                --text: #17202a;
+                --muted: #5f6b76;
+                --faint: #8a949d;
+                --line: #e4e8eb;
+                --accent: #0d9488;
+                --accent-soft: #e6f4f2;
+                --slate: #64748b;
+                --sky: #7fb3e0;
+                --amber: #d4a24c;
+                --hot: #e4572e;
+                --ok: #16a34a;
+                --shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 4px 16px rgba(16, 24, 40, 0.06);
+                --radius: 12px;
             }
             * { box-sizing: border-box; }
+            html, body { margin: 0; height: 100%; }
             body {
-                margin: 0;
-                font-family: system-ui, -apple-system, sans-serif;
-                background: var(--bg);
-                color: var(--text);
+                font-family: Inter, system-ui, -apple-system, sans-serif;
+                font-size: 15px;
                 line-height: 1.5;
+                color: var(--text);
+                background: var(--bg);
+                -webkit-font-smoothing: antialiased;
             }
-            main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; display: grid; gap: 16px; }
-            header h1 { margin: 0 0 4px; font-size: 1.6rem; }
-            header p { margin: 4px 0; color: var(--muted); max-width: 70ch; }
-            .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
-            h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
-            form { display: grid; grid-template-columns: 1fr 1fr 150px auto; gap: 10px; align-items: end; }
-            label { display: grid; gap: 4px; font-size: 0.85rem; color: var(--muted); }
-            input, select, button { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); min-width: 0; }
-            button { cursor: pointer; }
-            button.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
-            button:disabled { opacity: 0.5; cursor: wait; }
-            .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
-            .examples span { color: var(--muted); font-size: 0.85rem; }
-            .examples button { font-size: 0.85rem; padding: 5px 10px; border-radius: 999px; }
-            .free { margin-top: 10px; display: flex; gap: 8px; }
-            .free input { flex: 1; }
-            .grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; }
-            #map { height: 460px; border-radius: 8px; }
-            .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.8rem; color: var(--muted); margin-top: 8px; }
-            .swatch { display: inline-block; width: 18px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
-            .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
-            .routes { display: grid; gap: 8px; margin-top: 12px; }
-            .route { display: grid; grid-template-columns: 6px 1fr; gap: 10px; font-size: 0.9rem; }
-            .route .bar { border-radius: 3px; }
-            .route b { text-transform: capitalize; }
-            .slider { margin-top: 12px; font-size: 0.9rem; }
-            .slider input { width: 100%; padding: 0; }
-            .slider .row { display: flex; justify-content: space-between; color: var(--muted); font-size: 0.8rem; }
-            #agents { display: grid; gap: 8px; }
-            .agent { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 0.85rem; }
-            .agent .top { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
-            .agent .task { color: var(--muted); margin-top: 2px; }
-            .agent .summary { margin-top: 6px; white-space: pre-wrap; max-height: 7.5em; overflow: auto; }
-            .status { font-size: 0.75rem; padding: 1px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
-            .status.running { background: #fff3c4; color: #7a5b00; }
-            .status.done { background: #d8f3e8; color: #0d6b4f; }
-            .status.failed { background: #fbd9dd; color: #8e1b2b; }
-            .status.waiting { background: var(--line); color: var(--muted); }
-            #answer { overflow-wrap: anywhere; }
-            #answer table { border-collapse: collapse; font-size: 0.9rem; display: block; overflow-x: auto; }
-            #answer th, #answer td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; }
-            .empty { color: var(--muted); }
-            .error { color: var(--high); }
-            #chart svg { width: 100%; height: auto; }
-            #chart .note { font-size: 0.8rem; color: var(--muted); }
-            details { font-size: 0.85rem; }
-            summary { cursor: pointer; font-weight: 600; }
-            .call { border-top: 1px solid var(--line); padding: 6px 0; }
-            .call summary { font-weight: 400; }
-            .call .who { font-weight: 600; }
-            .call pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); padding: 8px; border-radius: 6px; max-height: 300px; overflow: auto; }
-            @media (max-width: 800px) {
-                form { grid-template-columns: 1fr; }
-                .grid { grid-template-columns: minmax(0, 1fr); }
-                #map { height: 340px; }
+            button, input, select { font: inherit; color: inherit; }
+            a { color: var(--accent); }
+
+            /* --- Layout: content column on the left, sticky map on the right --- */
+            .app { display: grid; grid-template-columns: 416px minmax(0, 1fr); height: 100vh; }
+            .panel { overflow-y: auto; padding: 24px 24px 48px; display: grid; gap: 16px; align-content: start; }
+            .mapwrap { position: relative; height: 100vh; }
+            #map { position: absolute; inset: 0; }
+            @media (max-width: 860px) {
+                .app { display: flex; flex-direction: column; height: auto; }
+                .mapwrap { order: -1; height: 45vh; flex: none; }
+                .panel { overflow: visible; padding: 16px 16px 48px; }
             }
+            /* A calmer basemap: the same OpenStreetMap tiles, with less color */
+            .leaflet-tile-pane { filter: saturate(0.35) brightness(1.04) contrast(0.92); }
+
+            /* --- Type and cards --- */
+            .brand { display: flex; align-items: center; gap: 8px; }
+            .brand .mark { width: 32px; height: 32px; border-radius: 8px; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 13px; letter-spacing: -0.02em; }
+            h1 { font-size: 20px; margin: 0; letter-spacing: -0.01em; }
+            .intro { color: var(--muted); margin: 8px 0 0; font-size: 14px; }
+            .card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px; min-width: 0; }
+            .card h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+            .small { font-size: 13px; color: var(--muted); }
+            .hidden { display: none !important; }
+
+            /* --- Trip form --- */
+            .field { display: grid; gap: 4px; margin-bottom: 8px; }
+            .field label { font-size: 12px; font-weight: 600; color: var(--muted); }
+            .pin { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--text); color: #fff; font-size: 11px; font-weight: 700; margin-right: 4px; }
+            .input, select.input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfc; min-width: 0; }
+            .input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+            .row { display: flex; gap: 8px; align-items: end; }
+            .row > * { flex: 1; min-width: 0; }
+            .btn { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 8px 12px; cursor: pointer; font-weight: 500; }
+            .btn:hover { border-color: #cdd4d9; }
+            .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 10px 16px; }
+            .btn.primary:hover { filter: brightness(0.95); }
+            .btn:disabled { opacity: 0.5; cursor: progress; }
+            .btn.small { font-size: 13px; padding: 6px 10px; }
+            a.btn { text-decoration: none; display: inline-block; }
+            .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+            .chip { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer; }
+            .chip:hover { border-color: var(--accent); color: var(--accent); }
+
+            /* --- Progress strip and agent chips --- */
+            .steps { display: flex; align-items: center; gap: 4px; font-size: 13px; }
+            .step { display: flex; align-items: center; gap: 4px; color: var(--faint); font-weight: 500; }
+            .step .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+            .step.active { color: var(--text); }
+            .step.active .dot { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+            .step.done { color: var(--muted); }
+            .step.done .dot { background: var(--ok); }
+            .arrow { color: var(--line); }
+            .timer { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+            @keyframes pulse { 50% { transform: scale(1.6); opacity: 0.5; } }
+            .agents { display: flex; flex-wrap: wrap; gap: 4px 4px; margin-top: 8px; align-items: center; }
+            .agents .round { font-size: 11px; color: var(--faint); font-weight: 600; margin: 0 4px 0 8px; }
+            .agent-chip { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--faint); cursor: pointer; }
+            .agent-chip.running { color: var(--accent); border-color: var(--accent); animation: glow 1.4s ease-in-out infinite; }
+            .agent-chip.done { color: #fff; background: var(--ok); border-color: var(--ok); }
+            .agent-chip.failed { color: #fff; background: var(--hot); border-color: var(--hot); }
+            @keyframes glow { 50% { background: var(--accent-soft); } }
+
+            /* --- Clarifying question --- */
+            .bubble { background: var(--accent-soft); border-radius: 12px 12px 12px 4px; padding: 12px 16px; }
+            .bubble .who { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+
+            /* --- Results --- */
+            .badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); vertical-align: middle; }
+            .badge.neutral { background: #eef1f3; color: var(--muted); }
+            .summary p { margin: 8px 0 0; }
+            .summary .lead { font-size: 16px; font-weight: 500; }
+            sup.cite { font-size: 10px; margin-left: 1px; }
+            sup.cite a { text-decoration: none; color: var(--accent); cursor: pointer; padding: 0 1px; }
+            .skeleton { height: 12px; border-radius: 6px; background: linear-gradient(90deg, #eef1f3, #f7f9fa, #eef1f3); background-size: 200% 100%; animation: shimmer 1.4s infinite; margin-top: 8px; }
+            @keyframes shimmer { to { background-position: -200% 0; } }
+
+            .route { border: 1px solid transparent; transition: border-color 0.15s; cursor: pointer; }
+            .route.recommended { border-color: var(--accent); }
+            .route.focus { border-color: var(--slate); }
+            .route .head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+            .route .swatch { width: 12px; height: 12px; border-radius: 4px; flex: none; }
+            .route .name { font-weight: 600; font-size: 16px; }
+            .route .via { color: var(--muted); font-size: 13px; margin-top: 2px; }
+            .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+            .stat .value { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+            .stat .label { font-size: 12px; color: var(--muted); }
+            .sure { font-size: 12px; color: var(--muted); margin-top: 8px; }
+            .lanes { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 12px; background: #eef1f3; }
+            .lanes span { height: 100%; }
+            .lane-key { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); margin-top: 4px; }
+            .lane-key i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+            .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+            .share-menu { display: flex; gap: 8px; margin-top: 8px; }
+
+            .slider label { display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; }
+            .slider input { width: 100%; accent-color: var(--accent); margin: 8px 0 4px; }
+            .slider .ends { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+
+            ol.spots { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+            ol.spots li { display: grid; grid-template-columns: 24px 1fr; gap: 8px; cursor: pointer; }
+            .num { width: 24px; height: 24px; border-radius: 50%; background: var(--hot); color: #fff; font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+            .spot-title { font-weight: 600; }
+
+            .project { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; }
+            .project:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+            .project .title { font-weight: 600; }
+            .bars { display: grid; grid-template-columns: 112px 1fr; gap: 4px 8px; align-items: center; font-size: 12px; margin: 8px 0; }
+            .bars .track { display: grid; gap: 2px; }
+            .bars .bar { height: 8px; border-radius: 4px; }
+            .bars .bar.before { background: #cbd5dc; }
+            .bars .bar.after { background: var(--accent); }
+            .bars .bar.after.cmp { background: var(--slate); }
+            .bars .val { font-size: 11px; color: var(--muted); }
+            details > summary { cursor: pointer; font-size: 13px; color: var(--muted); font-weight: 500; }
+            ul.plain { margin: 0; padding-left: 18px; }
+            ul.plain li { margin: 4px 0; }
+
+            .call { border-top: 1px solid var(--line); padding: 8px 0; font-size: 13px; }
+            .call pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); padding: 8px; border-radius: 8px; max-height: 280px; overflow: auto; font-size: 12px; }
+            .error { color: #b42318; }
+
+            /* --- Drawer for agent findings and sources --- */
+            .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100%); background: #fff; box-shadow: -8px 0 24px rgba(16, 24, 40, 0.12); z-index: 1000; transform: translateX(100%); transition: transform 0.2s ease; display: flex; flex-direction: column; }
+            .drawer.open { transform: none; }
+            .drawer:not(.open) { visibility: hidden; transition: transform 0.2s ease, visibility 0s 0.2s; }
+            .drawer header { display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid var(--line); }
+            .drawer header h3 { margin: 0; font-size: 16px; }
+            .drawer .body { padding: 16px; overflow-y: auto; font-size: 14px; }
+            .drawer .text { white-space: pre-wrap; }
+            .source { padding: 8px; border-radius: 8px; margin-bottom: 4px; }
+            .source.hit { background: var(--accent-soft); }
+            .source b { margin-right: 4px; }
+            @media (max-width: 860px) {
+                .drawer { top: auto; width: 100%; height: 75vh; border-radius: 16px 16px 0 0; transform: translateY(100%); }
+            }
+
+            /* --- Map bits --- */
+            .map-toggle { position: absolute; top: 16px; right: 16px; z-index: 500; background: #fff; border-radius: 8px; box-shadow: var(--shadow); padding: 8px 12px; font-size: 13px; display: flex; gap: 8px; align-items: center; }
+            .map-legend { position: absolute; bottom: 24px; right: 16px; z-index: 500; background: #fff; border-radius: 8px; box-shadow: var(--shadow); padding: 8px 12px; font-size: 12px; display: grid; gap: 4px; }
+            .map-legend i { display: inline-block; width: 16px; height: 4px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+            .letter-pin { width: 28px; height: 28px; border-radius: 50%; background: var(--text); color: #fff; font-weight: 700; display: grid; place-items: center; border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3); }
+            .spot-pin { width: 22px; height: 22px; border-radius: 50%; background: var(--hot); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
+            .leaflet-container { font-family: inherit; }
         </style>
     </head>
     <body>
-        <main>
-            <header>
-                <h1>Ave A to B: safer bike commutes in NYC</h1>
-                <p>
-                    Enter where you start and where you're going. A team of AI agents finds three routes (fastest, balanced, and lowest risk),
-                    checks police-reported bike crashes since 2021 on each, adjusts for how many people ride there, and tells you what the
-                    safer route costs in minutes. It also flags crash hotspots and checks what happened after new bike lanes went in.
-                </p>
-                <p>For NYC cyclists picking a commute, new Citi Bike or e-bike riders, and students. Answers take one to three minutes.</p>
-            </header>
+        <div class="app">
+            <div class="panel" id="panel">
+                <header>
+                    <div class="brand"><div class="mark">A→B</div><h1>Ave A to B</h1></div>
+                    <p class="intro">Find a safer bike route in New York City, and what it costs in minutes. We compare three routes using police-reported crashes since 2021 and how many people ride each street.</p>
+                    <p class="intro">For daily riders, new Citi Bike and e-bike riders, and students. Answers take about a minute.</p>
+                </header>
 
-            <section class="card">
-                <h2>Your trip</h2>
-                <form id="trip">
-                    <label>From <input id="start" placeholder="e.g. Columbia University" autocomplete="off" /></label>
-                    <label>To <input id="end" placeholder="e.g. Union Square, Manhattan" autocomplete="off" /></label>
-                    <label>When
-                        <select id="when">
-                            <option value="">Any time</option>
-                            <option value="around 8am">Morning (8am)</option>
-                            <option value="around noon">Midday</option>
-                            <option value="in the evening, around 6pm">Evening (6pm)</option>
-                            <option value="at night, around 10pm">Night (10pm)</option>
-                        </select>
-                    </label>
-                    <button class="primary" id="go" type="submit">Compare routes</button>
-                </form>
-                <div class="free">
-                    <input id="free" placeholder="Or ask in your own words, or answer the agent's question" autocomplete="off" />
-                    <button id="ask" type="button">Ask</button>
-                </div>
-                <div class="examples">
-                    <span>Try:</span>
-                    <button type="button" data-start="Columbia University" data-end="Union Square, Manhattan" data-when="around 8am">Columbia → Union Square, 8am</button>
-                    <button type="button" data-start="Prospect Heights, Brooklyn" data-end="DUMBO, Brooklyn" data-when="in the evening, around 6pm">Prospect Heights → DUMBO, evening</button>
-                    <button type="button" data-start="Astoria, Queens" data-end="Times Square" data-when="">Astoria → Times Square</button>
-                    <button type="button" data-free="Is biking in Brooklyn safe?">Is biking in Brooklyn safe?</button>
-                </div>
-            </section>
-
-            <div class="grid">
                 <section class="card">
-                    <h2>Routes</h2>
-                    <div id="map"></div>
-                    <div class="legend">
-                        <span><span class="swatch" style="background: var(--low)"></span>less than half the fastest route's risk</span>
-                        <span><span class="swatch" style="background: var(--mid)"></span>half to 85%</span>
-                        <span><span class="swatch" style="background: var(--high)"></span>85% or more</span>
-                        <span><span class="dot" style="background: var(--high)"></span>hotspot above average</span>
-                        <span><span class="dot" style="background: #888"></span>hotspot in usual range</span>
-                    </div>
-                    <div id="routes" class="routes"><span class="empty">Routes appear here once the Lead finds them.</span></div>
-                    <div class="slider" id="sliderBox" hidden>
-                        <label for="lambda">Trade minutes for safety: drag right to weigh risk more (purple dashed line)</label>
-                        <input type="range" id="lambda" min="0" max="10" step="0.5" value="1" />
-                        <div class="row"><span>fastest</span><span id="lambdaOut"></span><span>lowest risk</span></div>
+                    <form id="trip">
+                        <div class="field"><label for="start"><span class="pin">A</span>From</label><input class="input" id="start" placeholder="e.g. Columbia University" autocomplete="off" /></div>
+                        <div class="field"><label for="end"><span class="pin">B</span>To</label><input class="input" id="end" placeholder="e.g. Union Square, Manhattan" autocomplete="off" /></div>
+                        <div class="row">
+                            <div class="field" style="margin: 0">
+                                <label for="when">When you ride</label>
+                                <select class="input" id="when">
+                                    <option value="">Any time</option>
+                                    <option value="around 8am">Morning, 8am</option>
+                                    <option value="around noon">Midday</option>
+                                    <option value="in the evening, around 6pm">Evening, 6pm</option>
+                                    <option value="at night, around 10pm">Night, 10pm</option>
+                                </select>
+                            </div>
+                            <button class="btn primary" id="go" type="submit">Compare routes</button>
+                        </div>
+                    </form>
+                    <div class="examples">
+                        <button class="chip" data-start="Columbia University" data-end="Union Square, Manhattan" data-when="around 8am">Columbia → Union Sq</button>
+                        <button class="chip" data-start="Prospect Heights, Brooklyn" data-end="DUMBO, Brooklyn" data-when="in the evening, around 6pm">Prospect Heights → DUMBO</button>
+                        <button class="chip" data-start="Astoria, Queens" data-end="Times Square" data-when="">Astoria → Times Sq</button>
+                        <button class="chip" data-free="Is biking in Brooklyn safe?">Is biking in Brooklyn safe?</button>
                     </div>
                 </section>
 
-                <section class="card">
-                    <h2>Agents <span id="state"></span></h2>
-                    <div id="agents"><span class="empty">A Lead plans the work, Crash, Infrastructure, and Exposure Researchers dig in parallel, a Writer answers, and a Verifier re-checks every number.</span></div>
+                <section class="card hidden" id="progress">
+                    <div class="steps">
+                        <span class="step" data-step="plan"><span class="dot"></span>Plan</span><span class="arrow">→</span>
+                        <span class="step" data-step="research"><span class="dot"></span>Research</span><span class="arrow">→</span>
+                        <span class="step" data-step="write"><span class="dot"></span>Write</span><span class="arrow">→</span>
+                        <span class="step" data-step="check"><span class="dot"></span>Check</span>
+                        <span class="timer" id="timer">0:00</span>
+                    </div>
+                    <div class="agents" id="agents"></div>
+                </section>
+
+                <section class="card hidden" id="clarify">
+                    <div class="bubble"><div class="who">Ave A to B</div><div id="clarifyText"></div></div>
+                    <div class="examples" id="clarifyOptions"></div>
+                    <div class="row" style="margin-top: 8px">
+                        <input class="input" id="reply" placeholder="Type your answer" autocomplete="off" />
+                        <button class="btn" id="send" style="flex: none">Send</button>
+                    </div>
+                </section>
+
+                <section class="card hidden error" id="errorBox"></section>
+
+                <section class="card summary hidden" id="summary"></section>
+                <div id="routeCards" style="display: grid; gap: 16px"></div>
+
+                <section class="card slider hidden" id="sliderBox">
+                    <label for="lambda"><span>Faster ←→ Safer</span><span id="lambdaOut" class="small"></span></label>
+                    <input type="range" id="lambda" min="0" max="10" step="0.5" value="1" />
+                    <div class="ends"><span>Fastest route</span><span>Lowest risk</span></div>
+                    <p class="small" style="margin: 8px 0 0">Drag to try your own balance. The dashed line on the map shows that route.</p>
+                </section>
+
+                <section class="card hidden" id="spots"><h2>Stretches that stand out</h2><div id="spotList"></div></section>
+                <section class="card hidden" id="changes"><h2>New lanes and redesigns</h2><div id="changeList"></div></section>
+                <section class="card hidden" id="notes"><h2>Also worth knowing</h2><div id="noteList"></div></section>
+                <section class="card hidden" id="limits"><h2>What this can't tell you</h2><ul class="plain small" id="limitList"></ul></section>
+
+                <section class="card hidden" id="traceCard">
+                    <details>
+                        <summary>Show trace: every tool call by agent (<span id="callCount">0</span>)</summary>
+                        <div id="trace"></div>
+                    </details>
                 </section>
             </div>
 
-            <section class="card">
-                <h2>Answer</h2>
-                <div id="answer" class="empty">The answer appears here, with a source after every number.</div>
-            </section>
+            <div class="mapwrap">
+                <div id="map"></div>
+                <label class="map-toggle hidden" id="riskToggle"><input type="checkbox" id="showRisk" /> Show risk along route</label>
+                <div class="map-legend hidden" id="riskLegend">
+                    <span><i style="background: var(--ok)"></i>Less than half the Fastest route's average</span>
+                    <span><i style="background: var(--amber)"></i>Around average</span>
+                    <span><i style="background: var(--hot)"></i>More than 1.5 times the average</span>
+                </div>
+            </div>
+        </div>
 
-            <section class="card" id="chartCard" hidden>
-                <h2>Before and after new lanes and redesigns</h2>
-                <div id="chart"></div>
-            </section>
-
-            <section class="card">
-                <details id="traceBox">
-                    <summary>Trace: every tool call, by agent (<span id="callCount">0</span>)</summary>
-                    <div id="trace"></div>
-                </details>
-            </section>
-        </main>
+        <aside class="drawer" id="drawer" aria-hidden="true">
+            <header><h3 id="drawerTitle"></h3><button class="btn small" id="drawerClose">Close</button></header>
+            <div class="body" id="drawerBody"></div>
+        </aside>
 
         <script>
             const $ = (id) => document.getElementById(id);
-            const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-            let source = null;
-            let sessionId = null;
-            let current = null; // the routes event, for the slider
+            const COLORS = { teal: "#0d9488", slate: "#64748b", sky: "#7fb3e0", amber: "#d4a24c", hot: "#e4572e", ok: "#16a34a" };
+            const LANE_COLORS = { protected: "#0d9488", path: "#5eb8ad", link: "#9fd3cc", painted: "#7fb3e0", shared: "#c4cdd4", none: "#e4e8eb" };
+            const LANE_NAMES = { protected: "Protected", path: "Path", link: "Link", painted: "Painted", shared: "Shared", none: "No lane" };
+
+            function el(tag, attrs = {}, ...children) {
+                const node = document.createElement(tag);
+                for (const [k, v] of Object.entries(attrs)) {
+                    if (k === "class") node.className = v;
+                    else if (k === "style") node.style.cssText = v;
+                    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+                    else if (v !== undefined && v !== null) node.setAttribute(k, v);
+                }
+                for (const child of children.flat(Infinity)) if (child !== null && child !== undefined) node.append(child);
+                return node;
+            }
+            const pct = (r) => {
+                const change = Math.round((1 - r) * 100);
+                return change === 0 ? "about the same" : `${Math.abs(change)}% ${change > 0 ? "lower" : "higher"}`;
+            };
+
+            // --- State for one question ---
+            let state = null;
+            function fresh() {
+                return { session: state?.keepSession ? state.session : null, map: null, colors: {}, layers: {}, sources: [], calls: [], agents: {}, startedAt: Date.now(), focus: null };
+            }
 
             // --- Map ---
-            const map = L.map("map").setView([40.73, -73.97], 11);
+            const map = L.map("map", { zoomControl: false }).setView([40.73, -73.97], 12);
+            L.control.zoom({ position: "bottomleft" }).addTo(map);
             L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
                 maxZoom: 19,
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
             }).addTo(map);
             const routeLayer = L.layerGroup().addTo(map);
+            const riskLayer = L.layerGroup().addTo(map);
             const spotLayer = L.layerGroup().addTo(map);
+            const pinLayer = L.layerGroup().addTo(map);
             const sliderLayer = L.layerGroup().addTo(map);
 
-            function riskColor(relative) {
-                if (relative < 0.5) return css("--low");
-                if (relative < 0.85) return css("--mid");
-                return css("--high");
-            }
-
-            function pct(relative) {
-                if (relative >= 0.995 && relative <= 1.005) return "same as fastest";
-                const change = Math.round((1 - relative) * 100);
-                return change > 0 ? `${change}% lower` : `${-change}% higher`;
-            }
-
-            function drawRoutes(data) {
-                current = data;
-                routeLayer.clearLayers();
-                sliderLayer.clearLayers();
-                const seen = new Set();
-                const bounds = [];
-                const rows = [];
-                for (const [name, route] of Object.entries(data.routes)) {
-                    const same = seen.has(route.route_ref);
-                    seen.add(route.route_ref);
-                    const risk = route.relative_risk_vs_fastest;
-                    const color = riskColor(risk.assumed);
-                    if (!same) {
-                        for (const segment of route.line) {
-                            L.polyline(segment, { color, weight: name === "fastest" ? 5 : 6, opacity: 0.85 })
-                                .bindTooltip(`${name.replaceAll("_", " ")}: ${route.minutes} min`)
-                                .addTo(routeLayer);
-                            bounds.push(...segment);
-                        }
-                    }
-                    const label = name.replaceAll("_", " ") + (name === data.recommended_route ? " (recommended)" : "");
-                    rows.push(`<div class="route"><div class="bar" style="background:${color}"></div><div><b>${label}</b>${same ? " (same route as above)" : ""}<br>
-                        ${route.minutes} min, ${route.miles} mi. Risk vs. fastest: ${pct(risk.half)} / ${pct(risk.assumed)} / ${pct(risk.double)}
-                        <span class="empty">(half / assumed / double rider share)</span></div></div>`);
+            // Distinct routes, in order; identical routes share one entry with both names.
+            function distinctRoutes(data) {
+                const out = [];
+                for (const [key, route] of Object.entries(data.routes)) {
+                    const same = out.find((r) => r.route_ref === route.route_ref);
+                    if (same) same.keys.push(key);
+                    else out.push({ ...route, keys: [key] });
                 }
-                const labels = {
-                    safest: "One route is the safest of these three routes at every rider-share setting.",
-                    about_equally_safe: "The routes' risk ranges overlap, so the lower-risk ones are about equally safe.",
-                    depends_on_assumption: "Which route is lower risk depends on an assumption about where people ride.",
-                };
-                rows.unshift(`<div class="empty">${labels[data.safety_label] || ""}</div>`);
-                $("routes").innerHTML = rows.join("");
-                L.marker([data.start.lat, data.start.lon]).bindTooltip("Start").addTo(routeLayer);
-                L.marker([data.end.lat, data.end.lon]).bindTooltip("End").addTo(routeLayer);
-                if (bounds.length) map.fitBounds(bounds, { padding: [20, 20] });
-                $("sliderBox").hidden = false;
-                $("lambdaOut").textContent = "";
+                return out;
+            }
+            const nameOf = (route) => route.keys.map((k) => ({ fastest: "Fastest", balanced: "Balanced", lowest_risk: "Lowest risk" })[k]).join(" · ");
+
+            function assignColors(data) {
+                const routes = distinctRoutes(data);
+                const others = [COLORS.slate, COLORS.sky, COLORS.amber];
+                const colors = {};
+                for (const r of routes) {
+                    if (r.keys.includes(data.recommended_route)) colors[r.route_ref] = COLORS.teal;
+                }
+                for (const r of routes) if (!colors[r.route_ref]) colors[r.route_ref] = others.shift();
+                return colors;
             }
 
-            function drawHotspots(spots) {
+            function drawRoutes() {
+                const data = state.map;
+                routeLayer.clearLayers();
+                state.layers = {};
+                const routes = distinctRoutes(data);
+                const recommended = routes.find((r) => r.keys.includes(data.recommended_route));
+                const order = routes.filter((r) => r !== recommended).concat(recommended ? [recommended] : []);
+                for (const r of order) {
+                    const top = r === recommended;
+                    const group = L.layerGroup();
+                    if (top) for (const seg of r.line) L.polyline(seg, { color: "#fff", weight: 10, opacity: 0.9 }).addTo(group);
+                    for (const seg of r.line) {
+                        L.polyline(seg, { color: state.colors[r.route_ref], weight: top ? 6 : 4, opacity: 0.9 })
+                            .on("click", () => focusRoute(r.route_ref))
+                            .bindTooltip(`${nameOf(r)} · ${r.minutes} min`, { sticky: true })
+                            .addTo(group);
+                    }
+                    group.addTo(routeLayer);
+                    state.layers[r.route_ref] = group;
+                }
+                pinLayer.clearLayers();
+                const pin = (letter) => L.divIcon({ className: "", html: `<div class="letter-pin">${letter}</div>`, iconSize: [28, 28], iconAnchor: [14, 14] });
+                L.marker([data.start.lat, data.start.lon], { icon: pin("A") }).bindTooltip("Start").addTo(pinLayer);
+                L.marker([data.end.lat, data.end.lon], { icon: pin("B") }).bindTooltip("End").addTo(pinLayer);
+                fitRoutes();
+                $("riskToggle").classList.remove("hidden");
+                drawRisk();
+            }
+
+            function fitRoutes() {
+                const points = Object.values(state.map.routes).flatMap((r) => r.line.flat());
+                if (points.length) map.fitBounds(points, { padding: [32, 32] });
+            }
+
+            function focusRoute(ref) {
+                state.focus = state.focus === ref ? null : ref;
+                for (const [r, group] of Object.entries(state.layers)) {
+                    group.eachLayer((line) => line.setStyle({ opacity: !state.focus || r === state.focus ? 0.9 : 0.15 }));
+                    if (r === state.focus) group.eachLayer((line) => line.bringToFront());
+                }
+                for (const card of document.querySelectorAll(".route")) card.classList.toggle("focus", card.dataset.ref === state.focus);
+                drawRisk();
+            }
+
+            // Risk along the focused route (or the recommended one), colored per segment
+            function drawRisk() {
+                riskLayer.clearLayers();
+                const on = $("showRisk").checked && state?.map;
+                $("riskLegend").classList.toggle("hidden", !on);
+                if (!on) return;
+                const routes = distinctRoutes(state.map);
+                const route = routes.find((r) => r.route_ref === state.focus) || routes.find((r) => r.keys.includes(state.map.recommended_route)) || routes[0];
+                route.line.forEach((seg, i) => {
+                    const v = route.segment_risk[i];
+                    const color = v < 0.5 ? COLORS.ok : v < 1.5 ? COLORS.amber : COLORS.hot;
+                    L.polyline(seg, { color, weight: 7, opacity: 0.95 }).addTo(riskLayer);
+                });
+            }
+            $("showRisk").addEventListener("change", drawRisk);
+
+            function drawSpots(spots) {
                 spotLayer.clearLayers();
-                for (const spot of spots || []) {
-                    const color = spot.above_average ? css("--high") : "#888";
-                    const cause = Object.keys(spot.main_cause || {})[0] || "no cause recorded";
-                    L.circleMarker([spot.lat, spot.lon], { radius: 7, color, fillColor: color, fillOpacity: 0.8 })
-                        .bindPopup(`<b>${spot.street}</b><br>${spot.crashes.n} crashes since 2021 (range ${spot.crashes.low} to ${spot.crashes.high})<br>
-                            Main cause: ${cause}<br>${spot.above_average ? "Above the average for similar streets" : "Within the usual range for similar streets"}<br>
-                            <small>edge ${spot.edge_id}</small>`)
+                for (const s of spots) {
+                    const icon = L.divIcon({ className: "", html: `<div class="spot-pin">${s.number}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] });
+                    s.marker = L.marker([s.lat, s.lon], { icon, zIndexOffset: 1000 })
+                        .bindPopup(`<b>${s.number}. ${escapeHtml(s.street)}</b><br>${s.crashes.n} crashes since 2021 (range ${s.crashes.low} to ${s.crashes.high})<br>Main cause: ${escapeHtml(s.main_cause || "not recorded")}`)
                         .addTo(spotLayer);
                 }
             }
+            const escapeHtml = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-            // --- λ slider: one extra route from /route ---
-            let sliderTimer = null;
-            $("lambda").addEventListener("input", () => {
-                clearTimeout(sliderTimer);
-                sliderTimer = setTimeout(redrawSlider, 250);
+            // --- Citations: numbered superscripts that open the sources drawer ---
+            function cite(sources) {
+                if (!sources?.length) return null;
+                const sup = el("sup", { class: "cite" });
+                for (const s of sources) {
+                    let n = state.sources.indexOf(s);
+                    if (n < 0) n = state.sources.push(s) - 1;
+                    sup.append(el("a", { onclick: () => openSources(n + 1), title: "Show source" }, `${n + 1}`));
+                }
+                return sup;
+            }
+            function sentences(list) {
+                return (list || []).flatMap((s) => [s.text, cite(s.sources), " "]);
+            }
+            function describeSource(s) {
+                const refMatch = s.match(/(route|corridor):[0-9a-f]{8}/);
+                if (refMatch && refMatch[1] === "route") {
+                    const r = distinctRoutes(state.map).find((x) => x.route_ref === refMatch[0]);
+                    return [r ? `${nameOf(r)} route, ${r.miles} miles` : "A route", el("div", { class: "small" }, refMatch[0])];
+                }
+                if (refMatch) {
+                    const c = Object.values(state.map.routes).flatMap((r) => r.corridors || []).find((x) => x.corridor_ref === refMatch[0]);
+                    return [c ? `Stretch of ${c.street}, ${c.miles} miles` : "A stretch of a route", el("div", { class: "small" }, refMatch[0])];
+                }
+                const edge = s.match(/(\d+)-(\d+)-\d+/);
+                if (edge && !/collision/.test(s)) {
+                    const spot = (state.map.hotspots || []).find((h) => h.edge_id === edge[0]);
+                    return [spot ? `Street segment on ${spot.street}` : "Street segment",
+                        el("div", { class: "small" }, `Between OpenStreetMap nodes `, el("a", { href: `https://www.openstreetmap.org/node/${edge[1]}`, target: "_blank" }, edge[1]), " and ",
+                            el("a", { href: `https://www.openstreetmap.org/node/${edge[2]}`, target: "_blank" }, edge[2]))];
+                }
+                const ids = s.replace(/collisions?/i, "").split(/[,\s]+/).filter((x) => /^[0-9a-f]{8,}$/i.test(x));
+                if (ids.length) {
+                    return ["Police crash report" + (ids.length > 1 ? "s" : ""), el("div", { class: "small" },
+                        ids.map((id, i) => [i ? ", " : "", el("a", { href: `https://data.cityofnewyork.us/resource/h9gi-nx95.json?collision_id=${id}`, target: "_blank" }, id.slice(0, 10) + "…")]))];
+                }
+                return [s];
+            }
+            function openSources(hit) {
+                const body = state.sources.map((s, i) => el("div", { class: "source" + (i + 1 === hit ? " hit" : ""), id: `src${i + 1}` }, el("b", {}, `${i + 1}.`), ...describeSource(s)));
+                openDrawer("Sources", [el("p", { class: "small" }, "Every number comes from these records. Collision IDs open the city's crash data."), ...body]);
+                document.getElementById(`src${hit}`)?.scrollIntoView({ block: "center" });
+            }
+
+            // --- Drawer ---
+            function openDrawer(title, content) {
+                $("drawerTitle").textContent = title;
+                $("drawerBody").replaceChildren(...content);
+                $("drawer").classList.add("open");
+                $("drawer").setAttribute("aria-hidden", "false");
+            }
+            $("drawerClose").addEventListener("click", () => {
+                $("drawer").classList.remove("open");
+                $("drawer").setAttribute("aria-hidden", "true");
             });
 
-            async function redrawSlider() {
-                if (!current) return;
-                const lam = $("lambda").value;
-                const params = new URLSearchParams({
-                    start: `${current.start.lat},${current.start.lon}`,
-                    end: `${current.end.lat},${current.end.lon}`,
-                    lam,
+            // --- Progress strip and agent chips ---
+            const STEP_ORDER = ["plan", "research", "write", "check"];
+            function setStep(step) {
+                const at = STEP_ORDER.indexOf(step);
+                document.querySelectorAll(".step").forEach((node) => {
+                    const i = STEP_ORDER.indexOf(node.dataset.step);
+                    node.classList.toggle("active", step !== "done" && i === at);
+                    node.classList.toggle("done", step === "done" || i < at);
                 });
-                const route = await (await fetch("/route?" + params)).json();
-                sliderLayer.clearLayers();
-                if (route.error) {
-                    $("lambdaOut").textContent = route.error;
-                    return;
-                }
-                for (const segment of route.line) {
-                    L.polyline(segment, { color: css("--slider"), weight: 4, dashArray: "6 6" }).addTo(sliderLayer);
-                }
-                $("lambdaOut").textContent = `${route.minutes} min, risk ${pct(route.relative_risk_vs_fastest.assumed)}`;
             }
-
-            // --- Agent cards ---
-            const cards = {};
-            function card(agent, task) {
-                if (!cards[agent]) {
-                    if (!Object.keys(cards).length) $("agents").replaceChildren();
-                    const div = document.createElement("div");
-                    div.className = "agent";
-                    div.innerHTML = `<div class="top"><span></span><span class="status waiting">waiting</span></div><div class="task"></div><div class="summary"></div>`;
-                    div.querySelector(".top span").textContent = agent;
-                    $("agents").appendChild(div);
-                    cards[agent] = div;
+            let timer = null;
+            function startTimer() {
+                clearInterval(timer);
+                timer = setInterval(() => {
+                    const s = Math.round((Date.now() - state.startedAt) / 1000);
+                    $("timer").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+                }, 500);
+            }
+            const KIND_LABEL = { crash: "Crash", infrastructure: "Infrastructure", exposure: "Exposure" };
+            function chip(agent, label, round = 1) {
+                if (state.agents[agent]) return state.agents[agent];
+                if (round > 1 && !document.querySelector(`[data-round="${round}"]`)) {
+                    $("agents").append(el("span", { class: "round", "data-round": round }, `Round ${round}`));
                 }
-                if (task) cards[agent].querySelector(".task").textContent = task;
-                return cards[agent];
+                const node = el("button", { class: "agent-chip", onclick: () => showAgent(agent) }, label);
+                const writer = $("agents").querySelector('[data-agent="Writer"]');
+                if (writer && !["Writer", "Verifier"].includes(agent)) $("agents").insertBefore(node, writer);
+                else $("agents").append(node);
+                node.dataset.agent = agent;
+                state.agents[agent] = { node, label, text: "", status: "waiting" };
+                return state.agents[agent];
             }
-            function setStatus(agent, status, task) {
-                const badge = card(agent, task).querySelector(".status");
-                badge.className = "status " + status;
-                badge.textContent = status;
+            function setChip(agent, status) {
+                const a = state.agents[agent];
+                if (!a) return;
+                a.status = status;
+                a.node.className = "agent-chip " + status;
             }
-            function setSummary(agent, text) {
-                card(agent).querySelector(".summary").textContent = text;
+            // "Crash 1", "Crash 2"... A lone researcher of a kind has no number until a second one joins its round.
+            function labelFor(event) {
+                const same = Object.values(state.agents).filter((a) => a.kind === event.kind && a.round === event.round);
+                if (same.length === 1 && event.kind !== "crash") {
+                    same[0].label = `${KIND_LABEL[event.kind]} 1`;
+                    same[0].node.textContent = same[0].label;
+                }
+                return KIND_LABEL[event.kind] + (event.kind === "crash" || same.length ? ` ${same.length + 1}` : "");
+            }
+            function showAgent(agent) {
+                const a = state.agents[agent];
+                const calls = state.calls.filter((c) => c.agent === agent);
+                const parts = [];
+                if (a.task) parts.push(el("p", { class: "small" }, el("b", {}, "Task: "), a.task));
+                parts.push(el("div", { class: "text" }, a.text || (a.status === "running" ? "Still working…" : "No findings yet.")));
+                if (calls.length) {
+                    parts.push(el("h4", {}, `Tool calls (${calls.length})`));
+                    parts.push(...calls.map(renderCall));
+                }
+                openDrawer(a.label, parts);
             }
 
             // --- Trace ---
-            let calls = 0;
-            function addCall(event) {
-                calls += 1;
-                $("callCount").textContent = calls;
-                const item = document.createElement("details");
-                item.className = "call";
-                const args = JSON.stringify(event.args);
-                item.innerHTML = `<summary><span class="who"></span> called <code></code></summary><pre></pre>`;
-                item.querySelector(".who").textContent = event.agent;
-                item.querySelector("code").textContent = `${event.name}(${args.length > 120 ? args.slice(0, 120) + "…" : args})`;
-                let result = event.result;
-                try {
-                    result = JSON.stringify(JSON.parse(result), null, 1);
-                } catch (e) {}
-                item.querySelector("pre").textContent = `args: ${JSON.stringify(event.args, null, 1)}\n\nresult: ${result}`;
-                $("trace").appendChild(item);
+            function renderCall(c) {
+                let result = c.result;
+                try { result = JSON.stringify(JSON.parse(result), null, 1); } catch (e) {}
+                const args = JSON.stringify(c.args);
+                return el("details", { class: "call" },
+                    el("summary", {}, el("b", {}, c.agent), ` · ${c.name}(${args.length > 80 ? args.slice(0, 80) + "…" : args})`),
+                    el("pre", {}, `args: ${JSON.stringify(c.args, null, 1)}\n\nresult: ${result}`));
+            }
+            function addCall(c) {
+                state.calls.push(c);
+                $("callCount").textContent = state.calls.length;
+                $("trace").append(renderCall(c));
             }
 
-            // --- Before/after chart: crashes per mile-year, treated streets vs. comparison streets ---
-            function drawChart(rows) {
-                rows = (rows || []).filter((r) => r.rate_before != null);
-                $("chartCard").hidden = !rows.length;
-                if (!rows.length) return;
-                const width = 560, rowHeight = 64, left = 150;
-                const max = Math.max(...rows.flatMap((r) => [r.rate_before, r.rate_after, r.comparison_rate_before, r.comparison_rate_after]));
-                const scale = (v) => ((width - left - 60) * v) / max;
-                let svg = `<svg viewBox="0 0 ${width} ${rows.length * rowHeight + 24}" role="img" aria-label="Crash rates before and after">`;
-                rows.forEach((r, i) => {
-                    const y = i * rowHeight + 8;
-                    const bars = [
-                        ["changed street, before", r.rate_before, css("--muted")],
-                        ["changed street, after", r.rate_after, css("--accent")],
-                        ["comparison, before", r.comparison_rate_before, css("--line")],
-                        ["comparison, after", r.comparison_rate_after, css("--muted")],
+            // --- Route cards ---
+            function routeCards() {
+                const data = state.map;
+                const box = $("routeCards");
+                box.replaceChildren();
+                for (const r of distinctRoutes(data)) {
+                    const recommended = r.keys.includes(data.recommended_route);
+                    const tied = r.keys.some((k) => (data.routes_about_equally_safe || []).includes(k));
+                    const risk = r.relative_risk_vs_fastest;
+                    const isFastest = r.keys.includes("fastest");
+                    const badges = [
+                        recommended ? el("span", { class: "badge" }, "Recommended") : null,
+                        recommended && data.safety_label === "safest" ? el("span", { class: "badge neutral" }, "Safest of these three") : null,
+                        tied ? el("span", { class: "badge neutral" }, "About equally safe") : null,
+                        data.safety_label === "depends_on_assumption" && !isFastest ? el("span", { class: "badge neutral" }, "Depends on assumptions") : null,
                     ];
-                    svg += `<text x="0" y="${y + 12}" font-size="12" fill="currentColor">${r.treatment}</text>`;
-                    svg += `<text x="0" y="${y + 28}" font-size="10" fill="${css("--muted")}">${r.segments} segments, ${r.miles} mi</text>`;
-                    bars.forEach(([label, value, color], j) => {
-                        const by = y + j * 13;
-                        svg += `<rect x="${left}" y="${by}" width="${scale(value)}" height="10" fill="${color}" rx="2"><title>${label}: ${value}</title></rect>`;
-                        svg += `<text x="${left + scale(value) + 4}" y="${by + 9}" font-size="10" fill="currentColor">${value} ${j === 0 && i === 0 ? "" : ""}</text>`;
-                    });
-                });
-                svg += `</svg>`;
-                const findings = rows.map((r) => `<li><b>${r.treatment}:</b> ${r.finding}</li>`).join("");
-                $("chart").innerHTML = `${svg}<p class="note">Crashes per mile per year. Bars in each group: changed street before, changed street after (blue), comparison streets before, comparison streets after.</p><ul class="note">${findings}</ul>`;
+                    const lanes = laneBar(r);
+                    const card = el("section", { class: "card route" + (recommended ? " recommended" : ""), "data-ref": r.route_ref,
+                            onmouseenter: () => !state.focus && hover(r.route_ref, true), onmouseleave: () => !state.focus && hover(r.route_ref, false),
+                            onclick: (e) => !e.target.closest("button, a") && focusRoute(r.route_ref) },
+                        el("div", { class: "head" }, el("span", { class: "swatch", style: `background:${state.colors[r.route_ref]}` }), el("span", { class: "name" }, nameOf(r)), ...badges),
+                        el("div", { class: "via" }, r.via ? `via ${r.via}` : ""),
+                        el("div", { class: "stats" },
+                            stat(`${Math.round(r.minutes)} min`, `${r.miles} miles`),
+                            stat(isFastest ? "—" : `+${Math.round(r.extra_minutes_vs_fastest * 2)} min`, "extra per day, round trip"),
+                            stat(isFastest ? "Baseline" : pct(risk.assumed), "estimated crash risk vs. Fastest")),
+                        isFastest ? null : el("div", { class: "sure" }, `How sure are we: ${pct(risk.half)} to ${pct(risk.double)}, depending on how many riders use bike lanes.`),
+                        ...lanes,
+                        el("div", { class: "actions" },
+                            el("a", { class: "btn small", href: googleMapsUrl(r), target: "_blank", rel: "noopener", title: "Approximate: Google may change the route between key turns" }, "Google Maps (approx.)"),
+                            el("button", { class: "btn small", onclick: () => downloadGpx(r), title: "The exact route, for a bike computer or app" }, "GPX"),
+                            el("button", { class: "btn small", onclick: (e) => share(r, e.target) }, "Share")));
+                    box.append(card);
+                }
+                $("sliderBox").classList.remove("hidden");
+            }
+            function hover(ref, on) {
+                for (const [r, group] of Object.entries(state.layers)) group.eachLayer((line) => line.setStyle({ opacity: !on || r === ref ? 0.9 : 0.15 }));
+            }
+            const stat = (value, label) => el("div", { class: "stat" }, el("div", { class: "value" }, value), el("div", { class: "label" }, label));
+            function laneBar(r) {
+                const total = Object.values(r.miles_by_lane).reduce((a, b) => a + b, 0) || 1;
+                const keys = ["protected", "path", "link", "painted", "shared", "none"].filter((k) => r.miles_by_lane[k]);
+                return [
+                    el("div", { class: "lanes", title: "Miles by lane type" }, keys.map((k) => el("span", { style: `width:${(100 * r.miles_by_lane[k]) / total}%;background:${LANE_COLORS[k]}` }))),
+                    el("div", { class: "lane-key" }, keys.map((k) => el("span", {}, el("i", { style: `background:${LANE_COLORS[k]}` }), `${LANE_NAMES[k]} ${r.miles_by_lane[k].toFixed(1)} mi`))),
+                ];
+            }
+
+            // --- Export and share ---
+            function orderedPoints(route) {
+                const pts = [];
+                const d = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
+                for (const seg of route.line) {
+                    let s = seg;
+                    if (pts.length && d(pts[pts.length - 1], seg[seg.length - 1]) < d(pts[pts.length - 1], seg[0])) s = [...seg].reverse();
+                    for (const p of s) if (!pts.length || d(pts[pts.length - 1], p) > 0) pts.push(p);
+                }
+                return pts;
+            }
+            function googleMapsUrl(route) {
+                const { start, end } = state.map;
+                const params = new URLSearchParams({ api: "1", origin: `${start.lat},${start.lon}`, destination: `${end.lat},${end.lon}`, travelmode: "bicycling" });
+                if (route.turns?.length) params.set("waypoints", route.turns.map((p) => `${p[0]},${p[1]}`).join("|"));
+                return "https://www.google.com/maps/dir/?" + params;
+            }
+            function downloadGpx(route) {
+                const pts = orderedPoints(route).map((p) => `      <trkpt lat="${p[0]}" lon="${p[1]}"></trkpt>`).join("\n");
+                const name = `Ave A to B: ${nameOf(route)} route`;
+                const gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Ave A to B" xmlns="http://www.topografix.com/GPX/1/1">\n  <trk>\n    <name>${escapeHtml(name)}</name>\n    <trkseg>\n${pts}\n    </trkseg>\n  </trk>\n</gpx>\n`;
+                const link = el("a", { href: URL.createObjectURL(new Blob([gpx], { type: "application/gpx+xml" })), download: `ave-a-to-b-${route.keys[0]}.gpx` });
+                link.click();
+            }
+            function shareUrl() {
+                const params = new URLSearchParams();
+                if (state.trip) {
+                    params.set("from", state.trip.start);
+                    params.set("to", state.trip.end);
+                    if (state.trip.when) params.set("when", state.trip.when);
+                }
+                return location.origin + location.pathname + (params.toString() ? "?" + params : "");
+            }
+            async function share(route, button) {
+                const url = shareUrl();
+                const text = `Bike route from ${state.trip?.start || "A"} to ${state.trip?.end || "B"}: the ${nameOf(route)} route via ${route.via}, about ${Math.round(route.minutes)} minutes.`;
+                if (navigator.share && matchMedia("(pointer: coarse)").matches) {
+                    try { return await navigator.share({ title: "Ave A to B", text, url }); } catch (e) { return; }
+                }
+                const card = button.closest(".route");
+                card.querySelector(".share-menu")?.remove();
+                const mailto = `mailto:?subject=${encodeURIComponent("Bike route from Ave A to B")}&body=${encodeURIComponent(text + "\n\n" + url)}`;
+                const copy = el("button", { class: "btn small", onclick: async (e) => {
+                    try { await navigator.clipboard.writeText(url); e.target.textContent = "Link copied"; } catch (err) { e.target.textContent = url; }
+                } }, "Copy link");
+                card.append(el("div", { class: "share-menu" }, el("a", { class: "btn small", href: mailto }, "Email"), copy));
+            }
+
+            // --- λ slider ---
+            let sliderTimer = null;
+            $("lambda").addEventListener("input", () => {
+                clearTimeout(sliderTimer);
+                sliderTimer = setTimeout(redrawSlider, 200);
+            });
+            async function redrawSlider() {
+                if (!state?.map) return;
+                const { start, end } = state.map;
+                const params = new URLSearchParams({ start: `${start.lat},${start.lon}`, end: `${end.lat},${end.lon}`, lam: $("lambda").value });
+                const route = await (await fetch("/route?" + params)).json();
+                sliderLayer.clearLayers();
+                if (route.error) return ($("lambdaOut").textContent = route.error);
+                for (const seg of route.line) L.polyline(seg, { color: "#17202a", weight: 3, dashArray: "6 6", opacity: 0.8 }).addTo(sliderLayer);
+                $("lambdaOut").textContent = `${Math.round(route.minutes)} min · risk ${pct(route.relative_risk_vs_fastest.assumed)}`;
+            }
+
+            // --- Answer sections ---
+            function showSummary(answer) {
+                const data = state.map;
+                const label = { safest: "Safest of these three routes", about_equally_safe: "About equally safe", depends_on_assumption: "Depends on assumptions" }[data?.safety_label];
+                $("summary").classList.remove("hidden");
+                $("summary").replaceChildren(
+                    label ? el("span", { class: "badge" }, label) : null,
+                    el("p", { class: "lead" }, ...sentences(answer.summary)),
+                    answer.tradeoff?.length ? el("p", { class: "small" }, ...sentences(answer.tradeoff)) : null);
+            }
+            function summarySkeleton() {
+                $("summary").classList.remove("hidden");
+                $("summary").replaceChildren(el("h2", {}, "Recommendation"), el("div", { class: "skeleton", style: "width: 92%" }), el("div", { class: "skeleton", style: "width: 80%" }), el("div", { class: "skeleton", style: "width: 64%" }));
+            }
+            function showSpots(spots) {
+                $("spots").classList.remove("hidden");
+                if (!spots.length) return $("spotList").replaceChildren(el("p", { class: "small", style: "margin:0" }, "No single stretch stands out from similar streets."));
+                $("spotList").replaceChildren(el("ol", { class: "spots" }, spots.map((s) => el("li", { onclick: () => { map.setView([s.lat, s.lon], 16); s.marker.openPopup(); } },
+                    el("span", { class: "num" }, s.number),
+                    el("div", {},
+                        el("div", { class: "spot-title" }, s.street, cite([`edge ${s.edge_id}`, `collisions ${s.collision_ids.slice(0, 3).join(", ")}`])),
+                        el("div", { class: "small" }, `${s.crashes.n} crashes since 2021 (likely ${Math.round(s.crashes.low)} to ${Math.round(s.crashes.high)}), about ${s.similar_streets_expected} expected on similar streets. Main cause: ${s.main_cause || "not recorded"}. On the ${s.routes.join(" and ")} route${s.routes.length > 1 ? "s" : ""}.`),
+                        el("div", { class: "small" }, "Stands out compared to similar streets."))))));
+            }
+            function showChanges(results) {
+                $("changes").classList.remove("hidden");
+                const enough = results.filter((r) => !r.too_sparse);
+                const sparse = results.filter((r) => r.too_sparse);
+                const list = [];
+                if (!results.length) list.push(el("p", { class: "small", style: "margin:0" }, "No lane or project on these routes since 2021 can be compared before and after."));
+                if (results.length && !enough.length) list.push(el("p", { class: "small", style: "margin:0" }, "Every project on these routes has too few crashes to compare before and after."));
+                list.push(...enough.map(projectCard));
+                if (sparse.length) {
+                    list.push(el("details", { style: "margin-top: 12px" }, el("summary", {}, `Show projects with too little data (${sparse.length})`),
+                        el("ul", { class: "plain small" }, sparse.map((r) => el("li", {}, `${r.project} (${r.year}): ${r.crashes_before.n} crashes before, ${r.crashes_after.n} after.`)))));
+                }
+                $("changeList").replaceChildren(...list);
+            }
+            function projectCard(r) {
+                const y = r.crashes_per_year;
+                const max = Math.max(y.before, y.after, y.comparison_before, y.comparison_after) || 1;
+                const pair = (label, before, after, cmp) => [
+                    el("span", {}, label),
+                    el("div", { class: "track" },
+                        el("div", { class: "row", style: "gap:4px;align-items:center" }, el("div", { class: "bar before", style: `width:${(70 * before) / max}%;flex:none` }), el("span", { class: "val", style: "flex:none" }, `${before} before`)),
+                        el("div", { class: "row", style: "gap:4px;align-items:center" }, el("div", { class: "bar after" + (cmp ? " cmp" : ""), style: `width:${(70 * after) / max}%;flex:none` }), el("span", { class: "val", style: "flex:none" }, `${after} after`))),
+                ];
+                return el("div", { class: "project" },
+                    el("div", { class: "title" }, `${r.project}`, cite(r.route_refs)),
+                    el("div", { class: "small" }, `${r.year} · ${r.kind} · on the ${r.routes.join(" and ")} route${r.routes.length > 1 ? "s" : ""}`),
+                    el("div", { class: "bars" }, ...pair("This street", y.before, y.after, false), ...pair("Similar streets", y.comparison_before, y.comparison_after, true)),
+                    el("div", { class: "small" }, "Crashes per year. Similar streets are unchanged streets nearby, scaled to the same length."),
+                    el("p", { style: "margin: 8px 0 0; font-size: 14px" }, r.finding));
+            }
+            function showNotes(notes) {
+                $("notes").classList.toggle("hidden", !notes?.length);
+                $("noteList").replaceChildren(el("p", { style: "margin:0" }, ...sentences(notes)));
+            }
+            function showLimits() {
+                const routes = Object.values(state.map.routes);
+                const lines = ["Police-reported crashes only, so this measures serious crash risk, not every incident.",
+                    "Rider counts come from Citi Bike trips and a few city counters, so they don't cover every rider."];
+                const unsure = [...new Set(routes.filter((r) => r.lower_confidence).map((r) => r.label))];
+                if (unsure.length) lines.push(`Part of the ${unsure.join(", ")} route has no Citi Bike data nearby, so that estimate is lower confidence.`);
+                lines.push("These are not personal odds. A change after a new lane doesn't prove the lane caused it.");
+                if (routes.every((r) => r.crashes_5yr.n < 10)) lines.push("Too few crashes for conclusions about single stretches, so compare the routes as a whole.");
+                $("limits").classList.remove("hidden");
+                $("limitList").replaceChildren(...lines.map((t) => el("li", {}, t)));
             }
 
             // --- Running a question ---
-            function reset() {
-                routeLayer.clearLayers();
-                spotLayer.clearLayers();
-                sliderLayer.clearLayers();
-                current = null;
-                for (const key of Object.keys(cards)) delete cards[key];
-                $("agents").innerHTML = `<span class="empty">Starting…</span>`;
-                $("routes").innerHTML = `<span class="empty">Routes appear here once the Lead finds them.</span>`;
-                $("sliderBox").hidden = true;
-                $("answer").className = "empty";
-                $("answer").textContent = "Working. Researchers report on the right as they finish.";
-                $("chartCard").hidden = true;
+            function reset(keepSession) {
+                state = { ...fresh(), session: keepSession ? state?.session : null, trip: keepSession ? state?.trip : null };
+                for (const layer of [routeLayer, riskLayer, spotLayer, pinLayer, sliderLayer]) layer.clearLayers();
+                for (const id of ["summary", "sliderBox", "spots", "changes", "notes", "limits", "clarify", "errorBox", "riskToggle", "riskLegend"]) $(id).classList.add("hidden");
+                $("routeCards").replaceChildren();
+                $("agents").replaceChildren();
                 $("trace").replaceChildren();
-                calls = 0;
                 $("callCount").textContent = 0;
+                $("showRisk").checked = false;
+                $("progress").classList.remove("hidden");
+                $("traceCard").classList.remove("hidden");
+                $("timer").textContent = "0:00";
             }
 
-            function busy(on) {
-                $("go").disabled = on;
-                $("ask").disabled = on;
-                $("state").textContent = on ? "· running" : "";
-            }
-
-            function ask(message) {
+            let source = null;
+            function ask(message, { keepSession = false, trip = null } = {}) {
                 if (!message) return;
                 if (source) source.close();
-                reset();
+                reset(keepSession);
+                if (trip) state.trip = trip;
                 busy(true);
+                setStep("plan");
+                startTimer();
+                chip("Lead", "Lead");
+                setChip("Lead", "running");
                 const params = new URLSearchParams({ message });
-                if (sessionId) params.set("session_id", sessionId);
+                if (state.session) params.set("session_id", state.session);
                 source = new EventSource("/run?" + params);
-                source.onmessage = (msg) => {
-                    const event = JSON.parse(msg.data);
-                    if (event.type === "start") sessionId = event.session_id;
-                    else if (event.type === "activity") onActivity(event);
-                    else if (event.type === "researcher") {
-                        setStatus(event.agent, event.status === "running" ? "running" : event.status, event.task);
-                        if (event.summary) setSummary(event.agent, event.summary);
-                    } else if (event.type === "routes") drawRoutes(event.data);
-                    else if (event.type === "tool") addCall(event);
-                    else if (event.type === "done") onDone(event);
-                    else if (event.type === "error") onError(event.message);
-                };
-                source.onerror = () => onError("Lost the connection to the server.");
+                source.onmessage = (msg) => onEvent(JSON.parse(msg.data));
+                source.onerror = () => fail("Lost the connection to the server. Please try again.");
+            }
+            function busy(on) {
+                $("go").disabled = on;
+                $("send").disabled = on;
             }
 
-            function onActivity(event) {
-                const agent = event.agent;
-                if (/Researcher/.test(agent)) return; // researcher events drive those cards
-                if (event.text === "started") setStatus(agent, "running");
-                else if (event.text.startsWith("finished")) {
-                    setStatus(agent, "done");
-                    if (agent === "Verifier" || agent === "Pipeline") setSummary(agent, event.text.replace(/^finished:?\s*/, ""));
-                } else if (event.text.startsWith("could not finish")) setStatus(agent, "failed");
-                else if (agent === "Pipeline") setSummary(agent, event.text);
+            function onEvent(e) {
+                if (e.type === "start") state.session = e.session_id;
+                else if (e.type === "routes") {
+                    state.map = e.data;
+                    state.colors = assignColors(e.data);
+                    drawRoutes();
+                    routeCards();
+                    summarySkeleton();
+                } else if (e.type === "researcher") {
+                    if (e.status === "running") {
+                        setStep("research");
+                        const label = labelFor(e);
+                        const a = chip(e.agent, label, e.round);
+                        Object.assign(a, { kind: e.kind, round: e.round, task: e.task });
+                        setChip(e.agent, "running");
+                    } else {
+                        state.agents[e.agent].text = e.text || "";
+                        setChip(e.agent, e.status);
+                    }
+                } else if (e.type === "activity") onActivity(e);
+                else if (e.type === "tool") addCall(e);
+                else if (e.type === "done") onDone(e);
+                else if (e.type === "error") fail(e.message);
+            }
+            function onActivity(e) {
+                if (e.agent === "Writer" && e.text === "started") {
+                    setChip("Lead", "done");
+                    setStep("write");
+                    chip("Writer", "Writer");
+                    setChip("Writer", "running");
+                } else if (e.agent === "Verifier" && e.text === "started") {
+                    setChip("Writer", "done");
+                    setStep("check");
+                    chip("Verifier", "Verifier");
+                    setChip("Verifier", "running");
+                } else if (e.agent === "Verifier" && e.text.startsWith("could not finish")) setChip("Verifier", "failed");
+                else if (e.agent === "Lead" && e.text.startsWith("finished")) setChip("Lead", "done");
             }
 
-            function onDone(event) {
+            function onDone(e) {
                 source.close();
                 busy(false);
-                $("answer").className = "";
-                $("answer").innerHTML = DOMPurify.sanitize(marked.parse(event.response || ""));
-                if (event.map) {
-                    drawRoutes(event.map);
-                    drawHotspots(event.map.hotspots);
-                    drawChart(event.map.before_after);
+                clearInterval(timer);
+                setStep("done");
+                for (const name of ["Lead", "Writer", "Verifier"]) if (state.agents[name] && state.agents[name].status !== "failed") setChip(name, "done");
+                if (state.agents.Lead) state.agents.Lead.text = e.clarify ? `Asked: ${e.response}` : "Found the routes, sent the researchers, and checked for gaps.";
+                if (e.clarify) return showClarify(e.response, e.options || []);
+                $("summary").classList.add("hidden");
+                if (e.answer) {
+                    if (state.agents.Writer) state.agents.Writer.text = [...e.answer.summary, ...e.answer.tradeoff, ...e.answer.notes].map((s) => s.text).join("\n\n");
+                    if (state.agents.Verifier) state.agents.Verifier.text = e.verification ? (e.verification.ok ? "Every number matched a fresh run of the tools." : "Found these problems, which the Writer then fixed:\n\n" + e.verification.problems.map((p) => "• " + p).join("\n")) : "The check did not finish in time.";
                 }
-                if (event.verification) {
-                    const v = event.verification;
-                    setSummary("Verifier", v.ok ? "Every cited number matched the tools." : `Flagged ${v.problems.length} problem(s); the Writer fixed them.`);
+                if (!e.map) {
+                    $("summary").classList.remove("hidden");
+                    $("summary").replaceChildren(el("p", { class: "lead" }, ...sentences(e.answer?.summary || [{ text: e.response, sources: [] }])));
+                    return;
                 }
-                // A clarifying question keeps the session so the reply is read with it. Anything else starts fresh.
-                if (!event.clarify) sessionId = null;
-                else $("free").focus();
+                state.map = e.map;
+                state.colors = assignColors(e.map);
+                drawRoutes();
+                routeCards();
+                showSummary(e.answer);
+                drawSpots(e.map.hotspots);
+                showSpots(e.map.hotspots);
+                showChanges(e.map.before_after);
+                showNotes(e.answer.notes);
+                showLimits();
+                $("summary").scrollIntoView({ behavior: "smooth", block: "start" });
+                if (e.unverified?.length) showNotes([...e.answer.notes, { text: "An automatic check flagged numbers it could not fix in time. Open the Verifier for details.", sources: [] }]);
+                state.session = null; // a new question starts fresh
             }
-
-            function onError(message) {
+            function fail(message) {
                 if (source) source.close();
                 busy(false);
-                $("answer").className = "error";
-                $("answer").textContent = message;
+                clearInterval(timer);
+                $("errorBox").textContent = message;
+                $("errorBox").classList.remove("hidden");
+                $("summary").classList.add("hidden");
             }
 
-            function tripQuestion(start, end, when) {
-                return `I bike from ${start} to ${end}${when ? " " + when : ""}. Which route should I take?`;
+            function showClarify(question, options) {
+                $("progress").classList.add("hidden");
+                $("traceCard").classList.add("hidden");
+                $("clarify").classList.remove("hidden");
+                $("clarifyText").textContent = question;
+                $("clarifyOptions").replaceChildren(...options.map((o) => el("button", { class: "chip", onclick: () => reply(o) }, o)));
+                $("reply").value = "";
+                $("reply").focus();
             }
+            function reply(text) {
+                if (!text) return;
+                ask(text, { keepSession: true });
+            }
+            $("send").addEventListener("click", () => reply($("reply").value.trim()));
+            $("reply").addEventListener("keydown", (e) => e.key === "Enter" && reply($("reply").value.trim()));
 
+            // --- Inputs, examples, and shareable URLs ---
+            const tripQuestion = (t) => `I bike from ${t.start} to ${t.end}${t.when ? " " + t.when : ""}. Which route should I take?`;
+            function runTrip(trip) {
+                $("start").value = trip.start;
+                $("end").value = trip.end;
+                $("when").value = trip.when || "";
+                history.replaceState(null, "", "?" + new URLSearchParams({ from: trip.start, to: trip.end, ...(trip.when ? { when: trip.when } : {}) }));
+                ask(tripQuestion(trip), { trip });
+            }
             $("trip").addEventListener("submit", (e) => {
                 e.preventDefault();
-                const start = $("start").value.trim(), end = $("end").value.trim();
-                if (!start || !end) return onError("Enter both a start and an end, or ask in your own words below.");
-                sessionId = null;
-                ask(tripQuestion(start, end, $("when").value));
+                const trip = { start: $("start").value.trim(), end: $("end").value.trim(), when: $("when").value };
+                if (!trip.start || !trip.end) return fail("Enter where you start and where you're going.");
+                runTrip(trip);
             });
-            $("ask").addEventListener("click", () => ask($("free").value.trim()));
-            $("free").addEventListener("keydown", (e) => {
-                if (e.key === "Enter") ask($("free").value.trim());
-            });
-            for (const button of document.querySelectorAll(".examples button")) {
+            for (const button of document.querySelectorAll(".examples .chip[data-start], .examples .chip[data-free]")) {
                 button.addEventListener("click", () => {
-                    sessionId = null;
                     if (button.dataset.free) {
-                        $("free").value = button.dataset.free;
+                        history.replaceState(null, "", location.pathname);
                         return ask(button.dataset.free);
                     }
-                    $("start").value = button.dataset.start;
-                    $("end").value = button.dataset.end;
-                    $("when").value = button.dataset.when;
-                    ask(tripQuestion(button.dataset.start, button.dataset.end, button.dataset.when));
+                    runTrip({ start: button.dataset.start, end: button.dataset.end, when: button.dataset.when });
                 });
             }
+            const query = new URLSearchParams(location.search);
+            if (query.get("from") && query.get("to")) runTrip({ start: query.get("from"), end: query.get("to"), when: query.get("when") || "" });
         </script>
     </body>
 </html>

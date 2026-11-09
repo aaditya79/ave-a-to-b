@@ -37,7 +37,6 @@ FERRY_NOTE = ("Staten Island has no bike connection to the other boroughs in thi
               "and cross by ferry. Ask again for each side of the trip separately.")
 LIMITS = ("Police-reported crashes only, so this measures serious crash risk, not every incident. "
           "Citi Bike exposure doesn't cover all riders. These are not personal odds.")
-BEFORE_AFTER_NOTE = "Ridership likely rose after these changes, and the data can't tell whether risk per rider changed."
 
 
 # --- Loading ---
@@ -321,7 +320,26 @@ def _describe(positions: list[int], fastest: list[int]) -> dict:
         "lower_confidence": bool(uncovered > 0),
         "corridors": _corridors(positions),
         "line": _line(rows),
+        "segment_risk": _segment_risk(positions, fastest),
+        "turns": _turns(rows),
     }
+
+
+def _segment_risk(positions: list[int], fastest: list[int]) -> list[float]:
+    """Map data: each segment's risk per mile against the fastest route's average per mile, assumed setting."""
+    per_mile = RISK["assumed"][positions] / np.maximum(edges.length_mi.to_numpy()[positions], 1e-6)
+    baseline = RISK["assumed"][fastest].sum() / max(edges.length_mi.to_numpy()[fastest].sum(), 1e-6)
+    return [round(float(v), 2) for v in per_mile / max(baseline, 1e-9)]
+
+
+def _turns(rows: pd.DataFrame, limit: int = 8) -> list[list[float]]:
+    """Map data: a point where the route moves to a new street, for directions links. At most 8, spread out."""
+    lines = _line(rows)
+    names = rows["name"].tolist()
+    points = [lines[i][0] for i in range(1, len(names)) if names[i] != names[i - 1] and names[i] != "unnamed path"]
+    if len(points) > limit:
+        points = [points[round(i * (len(points) - 1) / (limit - 1))] for i in range(limit)]
+    return points
 
 
 def _line(rows: pd.DataFrame) -> list[list[list[float]]]:
@@ -352,8 +370,7 @@ def route_options(start: str, end: str) -> dict:
     lowest = _shortest(_path_cost(SAFEST_LAMBDA, "assumed", scales["assumed"]), a, b)
     shown = {"fastest": fastest, "balanced": balanced, "lowest_risk": lowest}
     verdict = _verdict(list(shown.values()))
-    key = "safest" if verdict["label"] == "safest" else "lowest_risk_candidate"
-    routes = {"fastest": _describe(fastest, fastest), "balanced": _describe(balanced, fastest), key: _describe(lowest, fastest)}
+    routes = {"fastest": _describe(fastest, fastest), "balanced": _describe(balanced, fastest), "lowest_risk": _describe(lowest, fastest)}
     names = list(routes)
     recommended = None if verdict["recommended"] is None else names[verdict["recommended"]]
     return {
@@ -468,8 +485,8 @@ def _expected(rows: pd.DataFrame) -> float:
 
 
 def _hotspots(segments: pd.DataFrame, every: pd.DataFrame, found: pd.DataFrame) -> list[dict]:
-    """Busiest segments. A stretch is only above average if its whole range sits above the class or
-    borough average. That check uses every crash in the window, since the averages do too."""
+    """Busiest segments. A stretch stands out only if its whole range sits above the average for
+    similar streets. That check uses every crash in the window, since the averages do too."""
     counts = every.groupby("edge_id").size().sort_values(ascending=False).head(5)
     spots = []
     for edge_id, n in counts.items():
@@ -482,7 +499,7 @@ def _hotspots(segments: pd.DataFrame, every: pd.DataFrame, found: pd.DataFrame) 
         spots.append({"edge_id": edge_id, "street": row["name"], "crashes": spread,
                       "crashes_matching_filters": int((found.edge_id == edge_id).sum()), "main_cause": _top(factors, 1),
                       "class_expected": round(class_expected, 1), "borough_expected": round(borough_expected, 1),
-                      "above_average": bool(spread["low"] > min(class_expected, borough_expected)),
+                      "above_average": bool(spread["low"] > class_expected),
                       "collision_ids": here.sort_values("crash_date", ascending=False).collision_id.head(5).tolist()})
     return spots
 
@@ -507,8 +524,8 @@ def crash_summary(edge_ids, filters: dict | None = None) -> dict:
         "killed_matching_filters": int(found.killed.sum()),
         "all_crashes": total, "class_expected_all_crashes": round(expected, 1),
         "borough_expected_all_crashes": round(borough_expected, 1),
-        # The same rule as a hotspot's: the whole range above the class or the borough average
-        "above_average": bool(total["low"] > min(expected, borough_expected)),
+        # The same rule as a hotspot's: the whole range above the similar-street (class) average
+        "above_average": bool(total["low"] > expected),
         "too_sparse_for_segment_conclusions": len(every) < SPARSE_CRASHES,
         "by_cause": _top(factors[~factors.isin(NOT_A_CAUSE)]),
         "by_time_of_day": {str(k): int(v) for k, v in hours.value_counts().sort_index().items()},
@@ -576,26 +593,55 @@ def similar_streets(edge_ids) -> dict:
             "note": "Class rates are per mile, not per rider. A busy class is not automatically a risky one."}
 
 
-def _did(group: pd.DataFrame) -> dict:
+def _per_year(value: float) -> str:
+    return f"{value:.1f}"
+
+
+def _did(group: pd.DataFrame, noun: str) -> dict:
+    """Crashes per year on the changed street, before and after, next to similar streets that weren't
+    changed (scaled to the same length). The finding states the raw change first, then the comparison."""
     before, after = int(group.crashes_pre.sum()), int(group.crashes_post.sum())
+    miles = group.length_mi.sum()
     pre_years, post_years = group.length_mi * group.pre_years, group.length_mi * group.post_years
-    result = {"segments": group.edge_id.nunique(), "miles": round(group.length_mi.sum(), 2),
+    comparison_before = float(np.average(group.control_pre_rate, weights=pre_years))
+    comparison_after = float(np.average(group.control_post_rate, weights=post_years))
+    yearly = {"before": before / (pre_years.sum() / miles), "after": after / (post_years.sum() / miles),
+              "comparison_before": comparison_before * miles, "comparison_after": comparison_after * miles}
+    result = {"segments": group.edge_id.nunique(), "miles": round(miles, 2),
               "crashes_before": count_range(before), "crashes_after": count_range(after),
-              "rate_before": round(before / pre_years.sum(), 2), "rate_after": round(after / post_years.sum(), 2),
-              "comparison_rate_before": round(float(np.average(group.control_pre_rate, weights=pre_years)), 2),
-              "comparison_rate_after": round(float(np.average(group.control_post_rate, weights=post_years)), 2)}
-    if before == 0 or after == 0:
-        return {**result, "finding": "Too few crashes on this stretch to compare before and after.", "too_sparse": True}
-    ratio = (after / post_years.sum() / (before / pre_years.sum())) / (result["comparison_rate_after"] / result["comparison_rate_before"])
+              "years_before": round(float(pre_years.sum() / miles), 1), "years_after": round(float(post_years.sum() / miles), 1),
+              "crashes_per_year": {k: round(v, 1) for k, v in yearly.items()},
+              "comparison_note": "Comparison: similar streets in the same borough that weren't changed, scaled to this length."}
+    sparse = before == 0 or after == 0 or before + after < SPARSE_CRASHES * 2
+    if sparse:
+        return {**result, "too_sparse": True,
+                "finding": f"Too few crashes to compare before and after ({before} before, {after} after)."}
+    ratio = (yearly["after"] / yearly["before"]) / (comparison_after / comparison_before)
     spread = 2 * math.sqrt(1 / before + 1 / after)
     low, high = ratio * math.exp(-spread), ratio * math.exp(spread)
-    sparse = before + after < SPARSE_CRASHES * 2
-    if high < 1:
-        finding = "Crash counts fell by more than on comparison streets."
+    raw = _change("Crashes", yearly["before"], yearly["after"])
+    similar = _change("", comparison_before * miles, comparison_after * miles)  # "fell from 3.7 to 3.6 a year"
+    same_direction = similar.split()[0] == raw.split()[1]
+    if low <= 1 <= high and same_direction:
+        compare = f"{raw}, but similar streets that weren't changed {similar.split()[0]} by about as much."
+    elif low <= 1 <= high:
+        compare = (f"{raw}. Similar streets that weren't changed {similar}, but a change this size is within "
+                   f"normal year-to-year swings.")
+    elif high < 1:
+        compare = f"{raw}, a bigger drop than on similar streets that weren't changed, which {similar}."
     else:
-        finding = "Crash counts did not fall relative to comparison streets."
-    return {**result, "did_ratio": round(ratio, 2), "did_range": [round(low, 2), round(high, 2)], "too_sparse": sparse,
-            "finding": "Too few crashes on this stretch to compare before and after." if sparse else f"{finding} {BEFORE_AFTER_NOTE}"}
+        compare = f"{raw}, a worse trend than on similar streets that weren't changed, which {similar}."
+    finding = f"{compare} Ridership likely rose too, so the data can't tell whether the {noun} changed risk per rider."
+    return {**result, "did_ratio": round(ratio, 2), "did_range": [round(low, 2), round(high, 2)], "too_sparse": False,
+            "finding": finding}
+
+
+def _change(subject: str, before: float, after: float) -> str:
+    """'Crashes fell from 8.2 to 6.1 a year', or 'rose', or 'stayed about the same'."""
+    if abs(after - before) <= 0.05 * max(before, 1e-9) or _per_year(before) == _per_year(after):
+        return f"{subject} stayed about the same, near {_per_year(before)} a year".strip()
+    verb = "fell" if after < before else "rose"
+    return f"{subject} {verb} from {_per_year(before)} to {_per_year(after)} a year".strip()
 
 
 def _project_name(project: str, edge_id: str) -> str:
@@ -607,20 +653,44 @@ def _project_name(project: str, edge_id: str) -> str:
 
 @safe
 def before_after(edge_ids) -> dict:
-    """Difference-in-differences for segments that got a lane or SIP in the window."""
+    """Before and after, one result per project: each new lane (by street) or Street Improvement Project
+    since 2021, against similar streets that weren't changed."""
     ids = resolve(edge_ids)
     found = treated[treated.edge_id.isin(ids)]
     if found.empty:
-        return {"treated_segments": 0, "finding": "No lane or SIP on this stretch can be compared before and after."}
+        return {"treated_segments": 0, "results": [], "finding": "No lane or project on this stretch can be compared before and after."}
+    found = found.assign(name=[_project_name(p, e) for p, e in zip(found.project, found.edge_id)])
     results = []
-    for name, group in found.groupby("treatment"):
-        named = group.assign(name=[_project_name(p, e) for p, e in zip(group.project, group.edge_id)])
-        projects = named.drop_duplicates("name").sort_values("treated_on")
-        results.append({"treatment": name, **_did(group),
-                        "projects": [{"project": p.name, "year": int(p.treated_on.year)} for p in projects.head(8).itertuples()]})
+    for (treatment, name), group in found.groupby(["treatment", "name"]):
+        noun = "redesign" if treatment == "SIP" else "lane"
+        kind = "Street Improvement Project" if treatment == "SIP" else f"new {treatment.removeprefix('lane: ')} lane"
+        results.append({"project": name, "year": int(group.treated_on.min().year), "kind": kind, **_did(group, noun)})
+    results.sort(key=lambda r: (r["too_sparse"], -(r["crashes_before"]["n"] + r["crashes_after"]["n"])))
     return {"treated_segments": found.edge_id.nunique(), "results": results,
-            "wording": "Report the finding as written. Never say a lane worked or failed. Causation can't be shown here.",
-            "range_note": "The range reflects crash-count noise on treated streets only, so it is too narrow."}
+            "wording": "Quote each finding as written. Never say a lane worked or failed. Causation can't be shown here.",
+            "range_note": "The range reflects crash-count noise on the changed streets only, so it is too narrow."}
+
+
+@safe
+def standout_segments(edge_ids, limit: int = 5) -> dict:
+    """Segments whose whole crash range (n ± 2 × √n, since 2021) sits above the average for similar
+    streets, busiest first. These are the only stretches the answer may single out."""
+    ids = resolve(edge_ids)
+    segments = edges.loc[list(dict.fromkeys(ids))]
+    expected = segments.crash_class_rate * segments.mile_years
+    low = segments.crashes - 2 * np.sqrt(segments.crashes)
+    picked = segments[low > expected].sort_values("crashes", ascending=False).head(limit)
+    every = crashes[crashes.edge_id.isin(picked.index)]
+    spots = []
+    for number, row in enumerate(picked.itertuples(), start=1):
+        here = every[every.edge_id == row.edge_id]
+        causes = here.contributing_factor_vehicle_1[~here.contributing_factor_vehicle_1.isin(NOT_A_CAUSE)].dropna()
+        spots.append({"number": number, "edge_id": row.edge_id, "street": row.name, "crashes": count_range(row.crashes),
+                      "similar_streets_expected": round(float(row.crash_class_rate * row.mile_years), 1),
+                      "main_cause": next(iter(_top(causes, 1)), None), **edge_point(row.edge_id),
+                      "collision_ids": here.sort_values("crash_date", ascending=False).collision_id.head(5).tolist()})
+    return {"hotspots": spots,
+            "finding": None if spots else "No single stretch stands out from similar streets."}
 
 
 # --- SQL ---

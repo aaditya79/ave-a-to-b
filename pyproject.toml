@@ -26,4 +26,5 @@ build = [
     "requests>=2.31",
     "pytest>=8",
     "matplotlib>=3.11.2",
+    "playwright>=1.64.1",
 ]
