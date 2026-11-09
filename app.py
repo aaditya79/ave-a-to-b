@@ -581,8 +581,10 @@ def render_markdown(written: Answer, map_: dict, unverified: list[str] | None, u
     changes = [f"- {r['project']} ({r['year']}, {r['kind']}): {r['finding']}{cite(r['route_refs'])}"
                for r in map_["before_after"] if not r["too_sparse"]]
     sparse = sum(r["too_sparse"] for r in map_["before_after"])
-    if sparse:
+    if sparse and changes:
         changes.append(f"- {sparse} more project{'s' if sparse > 1 else ''} had too few crashes to compare before and after.")
+    elif sparse:
+        changes.append(f"- {'All ' + str(sparse) + ' projects' if sparse > 1 else 'The one project'} on these routes had too few crashes to compare before and after.")
     changes = changes or ["- No lane or project on these routes since 2021 can be compared before and after."]
     parts = [render_sentences(Answer(summary=written.summary, tradeoff=[], notes=[])),
              f"### Time versus safety\n\n{table}\n\n" + " ".join(f"{x.text}{cite(x.sources)}" for x in written.tradeoff),

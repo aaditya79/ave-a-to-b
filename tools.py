@@ -237,10 +237,15 @@ def _nearest_node(place: dict) -> int:
     return int(routable[i])
 
 
+# Two paths can cost exactly the same, and then Linux and macOS pick different ones. A fixed offset of at
+# most a millionth of a minute per segment makes every path's cost unique, so routes match everywhere.
+TIE_BREAK = np.random.default_rng(0).random(len(edges)) * 1e-6
+
+
 def _matrix(cost: np.ndarray) -> csr_matrix:
     """Cheapest arc per (from, to) pair for one per-edge cost."""
     cells = np.full(len(pair_from), np.inf)
-    np.minimum.at(cells, arc_pair, cost[arc_edge])
+    np.minimum.at(cells, arc_pair, cost[arc_edge] + TIE_BREAK[arc_edge])
     return csr_matrix((cells, (pair_from, pair_to)), shape=(len(nodes), len(nodes)))
 
 
@@ -253,14 +258,14 @@ def _shortest(cost: np.ndarray, start: int, end: int) -> list[int]:
     while path[-1] != start:
         path.append(int(previous[path[-1]]))
     path.reverse()
-    order = np.argsort(pair_key)
+    order = np.argsort(pair_key, kind="stable")  # the default sort orders ties differently on Linux and macOS
     sorted_keys = pair_key[order]
     positions = []
     for a, b in zip(path, path[1:]):
         key = a * len(nodes) + b
         lo, hi = np.searchsorted(sorted_keys, [key, key + 1])
         options = arc_edge[order[lo:hi]]
-        positions.append(int(options[np.argmin(cost[options])]))
+        positions.append(int(options[np.argmin(cost[options] + TIE_BREAK[options])]))
     return positions
 
 
