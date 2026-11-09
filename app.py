@@ -9,6 +9,7 @@ answers, and a Verifier re-runs the tools behind every number before the answer 
 import asyncio
 import json
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -36,11 +37,11 @@ set_tracing_disabled(True)
 if os.getenv("GEMINI_API_KEY"):
     MODEL = LitellmModel(model="gemini/gemini-3.5-flash", api_key=os.environ["GEMINI_API_KEY"])
     RESEARCHER_MODEL = LitellmModel(model="gemini/gemini-3.5-flash-lite", api_key=os.environ["GEMINI_API_KEY"])
-    SETTINGS = ModelSettings(extra_args={"timeout": 90, "num_retries": 2})
+    SETTINGS = ModelSettings(extra_args={"timeout": 90, "num_retries": 3})
 else:
     MODEL = LitellmModel(model="vertex_ai/gemini-3.5-flash", api_key="unused")
     RESEARCHER_MODEL = LitellmModel(model="vertex_ai/gemini-3.5-flash-lite", api_key="unused")
-    SETTINGS = ModelSettings(extra_args={"vertex_location": "global", "timeout": 90, "num_retries": 2})
+    SETTINGS = ModelSettings(extra_args={"vertex_location": "global", "timeout": 90, "num_retries": 3})
 
 MAX_RESEARCHERS = 10  # in all, across rounds
 MAX_ROUNDS = 3  # the first fan-out plus two gap rounds
@@ -100,7 +101,6 @@ def route_options(ctx: RunContextWrapper[Research], start: str, end: str) -> str
     return as_text(for_the_model(result))
 
 
-@function_tool
 def crash_summary(where: str, year_from: int = 2021, year_to: int = 2026, severe_only: bool = False,
                   rider_type: Literal["any", "pedal", "e-bike"] = "any", hour_from: int = 0, hour_to: int = 24) -> str:
     """Police-reported bike crashes on a stretch: counts with ranges, the expected count for similar
@@ -121,7 +121,6 @@ def crash_summary(where: str, year_from: int = 2021, year_to: int = 2026, severe
     return as_text(tools.crash_summary(edge_ids(where), filters))
 
 
-@function_tool
 def infrastructure_summary(where: str) -> str:
     """Bike lanes by type, lanes installed since 2021, Street Improvement Projects (name and year),
     truck route miles, and blocked-bike-lane complaints on a stretch.
@@ -132,7 +131,6 @@ def infrastructure_summary(where: str) -> str:
     return as_text(tools.infrastructure_summary(edge_ids(where)))
 
 
-@function_tool
 def exposure_summary(where: str) -> str:
     """Estimated riders per day on a stretch, where the estimate comes from, and how far to trust it.
 
@@ -142,7 +140,6 @@ def exposure_summary(where: str) -> str:
     return as_text(tools.exposure_summary(edge_ids(where)))
 
 
-@function_tool
 def similar_streets(where: str) -> str:
     """Crashes on a stretch compared with the expected count for similar streets (same lane type, road
     class, and borough), class by class, with ranges.
@@ -153,7 +150,6 @@ def similar_streets(where: str) -> str:
     return as_text(tools.similar_streets(edge_ids(where)))
 
 
-@function_tool
 def before_after(where: str) -> str:
     """For segments that got a bike lane or Street Improvement Project since 2021: crashes before and
     after, against comparison streets that didn't change. The finding is worded for you: report it as is.
@@ -164,7 +160,6 @@ def before_after(where: str) -> str:
     return as_text(tools.before_after(edge_ids(where)))
 
 
-@function_tool
 def run_sql(query: str) -> str:
     """Run one read-only DuckDB SELECT over the raw tables: crashes, crash_people, crash_locations,
     edge_lanes, edge_sips, before_after, citibike_h3, citibike_stations, counter_daily,
@@ -176,6 +171,9 @@ def run_sql(query: str) -> str:
     return as_text(tools.run_sql(query))
 
 
+EVIDENCE = {f.__name__: f for f in [crash_summary, infrastructure_summary, exposure_summary, similar_streets, before_after]}
+TOOLS = {name: function_tool(f) for name, f in [*EVIDENCE.items(), ("run_sql", run_sql)]}
+
 # --- Researchers: three kinds, each with only the tools its job needs ---
 
 RESEARCHER_RULES = """
@@ -184,7 +182,7 @@ Rules:
   ref or edge ID you passed, and collision IDs for a hotspot, e.g. [corridor:ab12cd34] or
   [edge 42731051-9903143738-0; collisions 1f0e..., 9a3b...].
 - Give counts with their range, e.g. "38 crashes (range 26 to 50)".
-- Call a stretch dangerous only when the tool marks it above_average or above_class_average. Otherwise
+- Call a stretch dangerous only when the tool marks it above_average. Otherwise
   describe it as within the usual range for similar streets.
 - Compare lane types only within similar streets. Never say painted lanes are more dangerous than no lane:
   painted lanes sit mostly on busy arterials.
@@ -199,11 +197,11 @@ RESEARCHERS = {
         instructions="""\
 You study police-reported bike crashes on the routes or corridors you're given.
 1. Call crash_summary once per ref, all in one turn. Pass the hours if the task names a time window.
-2. Report all_crashes with its range and whether it is above_class_average, then the count matching the
+2. Report all_crashes with its range and whether it is above_average, then the count matching the
    time window. For each hotspot: its edge ID, crash count and range, main cause, whether it is
    above_average, and two collision IDs. Call similar_streets if the task asks how a stretch compares.
 """ + RESEARCHER_RULES,
-        model=RESEARCHER_MODEL, model_settings=SETTINGS, tools=[crash_summary, similar_streets, run_sql]),
+        model=RESEARCHER_MODEL, model_settings=SETTINGS, tools=[TOOLS["crash_summary"], TOOLS["similar_streets"], TOOLS["run_sql"]]),
     "infrastructure": Agent(
         name="Infrastructure Researcher",
         instructions="""\
@@ -213,7 +211,7 @@ You study bike lanes and street redesigns on the routes or corridors you're give
    that ref and report its finding word for word, with the counts, rates, and projects (name and year
    only). Never say a lane worked or failed.
 """ + RESEARCHER_RULES,
-        model=RESEARCHER_MODEL, model_settings=SETTINGS, tools=[infrastructure_summary, before_after, run_sql]),
+        model=RESEARCHER_MODEL, model_settings=SETTINGS, tools=[TOOLS["infrastructure_summary"], TOOLS["before_after"], TOOLS["run_sql"]]),
     "exposure": Agent(
         name="Exposure Researcher",
         instructions="""\
@@ -222,7 +220,7 @@ You estimate how many people bike the routes or corridors you're given, and how 
 2. Report riders per day (as a rough estimate), the share of miles with Citi Bike coverage, and whether
    the estimate is lower confidence. Call similar_streets if the task asks about busy versus risky.
 """ + RESEARCHER_RULES,
-        model=RESEARCHER_MODEL, model_settings=SETTINGS, tools=[exposure_summary, similar_streets]),
+        model=RESEARCHER_MODEL, model_settings=SETTINGS, tools=[TOOLS["exposure_summary"], TOOLS["similar_streets"]]),
 }
 
 
@@ -330,7 +328,9 @@ Never say a lane worked or failed. Never say painted lanes are more dangerous th
 types only within similar streets. If there is no route and the note mentions the Staten Island Ferry,
 explain that option. Write plain, short sentences."""
 
-writer = Agent(name="Writer", instructions=WRITER_RULES, model=MODEL, model_settings=SETTINGS)
+# Default reasoning spent 16,000 thinking tokens and up to 150 s on one answer; low writes the same answer in about 20 s.
+WRITER_SETTINGS = SETTINGS.resolve(ModelSettings(extra_args={**SETTINGS.extra_args, "reasoning_effort": "low"}))
+writer = Agent(name="Writer", instructions=WRITER_RULES, model=MODEL, model_settings=WRITER_SETTINGS)
 
 
 # --- The Verifier: re-runs the tools for every number the Writer cites ---
@@ -344,22 +344,42 @@ class Check(BaseModel):
 verifier = Agent(
     name="Verifier",
     instructions="""\
-You check a draft answer about bike routes. For every number the draft cites, re-run the tool behind it
-with the cited ref or edge IDs and compare: crash counts, ranges, minutes, relative risks, before/after
-results. Call several tools in one turn. The route options the draft used are included: check minutes and
-relative risks against them without calling a tool.
+You check a draft answer about bike routes against fresh tool results. The code has already re-run every
+tool call behind the refs and edge IDs the draft cites; their results follow the draft. The route options
+cover minutes and relative risks. Compare every number in the draft with them: crash counts, ranges,
+minutes, relative risks, project counts and years, before/after results.
 
-Also flag: a number with no citation, a stretch called dangerous that the tools don't mark above average,
-a lane said to have worked or failed, a per-rider rate or personal odds, painted lanes called more
-dangerous than no lane, a route called safest when safety_label isn't 'safest', a route called safest
-without the words "of these three routes", or a missing limits section.
+Also flag: a number with no citation, a number that no result supports, a stretch called dangerous that
+the results don't mark above average, a lane said to have worked or failed, a per-rider rate or personal
+odds, painted lanes called more dangerous than no lane, a route called safest when safety_label isn't
+'safest', a route called safest without the words "of these three routes", a before/after finding not
+quoted as written, or a missing limits section.
 
 Return ok=true with no problems if everything matches. Otherwise list each problem in one line: what the
-draft says, what the tool returned, and the fix.""",
-    model=MODEL, model_settings=SETTINGS,
-    tools=[crash_summary, infrastructure_summary, exposure_summary, similar_streets, before_after],
-    output_type=Check,
+draft says, what the results say, and the fix.""",
+    model=MODEL, model_settings=SETTINGS, output_type=Check,
 )
+
+CITED = re.compile(r"\b(?:route|corridor):[0-9a-f]{8}\b|\b\d+-\d+-\d+\b")
+
+
+def recheck(draft: str, hooks: "TraceHooks") -> str:
+    """Re-run, in code, every evidence call behind a ref or edge ID the draft cites: the Researchers' own
+    calls with their own arguments, and a plain crash_summary for a cited segment no one asked about.
+    Each re-run goes in the trace under the Verifier."""
+    cited = set(CITED.findall(draft))
+    earlier = [c for c in hooks.tool_calls if c["name"] in EVIDENCE and c["agent"] != "Verifier"]
+    todo = {json.dumps([c["name"], c["args"]], sort_keys=True): (c["name"], c["args"]) for c in earlier
+            if str(c["args"].get("where", "")).strip() in cited}
+    covered = {args.get("where", "").strip() for _, args in todo.values()}
+    for ref in sorted(cited - covered):
+        todo[json.dumps(["crash_summary", {"where": ref}])] = ("crash_summary", {"where": ref})
+    results = []
+    for name, args in todo.values():
+        result = EVIDENCE[name](**args)
+        hooks.record("Verifier", name, args, result)
+        results.append(f"{name}({json.dumps(args)}):\n{result}")
+    return "\n\n".join(results) or "The draft cites no refs or edge IDs."
 
 
 # --- The pipeline ---
@@ -373,16 +393,19 @@ class TraceHooks(PanelHooks):
         self.tool_calls: list[dict] = []
         self.started = time.monotonic()
 
+    def record(self, agent: str, name: str, args, result) -> None:
+        call = {"agent": agent, "name": name, "args": args, "result": str(result),
+                "finished_at_seconds": round(time.monotonic() - self.started, 1)}
+        self.tool_calls.append(call)
+        self.emit({"type": "tool", **call, "result": call["result"][:2000]})
+
     async def on_tool_end(self, context, agent, tool, result):
         args = getattr(context, "tool_arguments", None)
         try:
             args = json.loads(args) if args else {}
         except ValueError:
             pass
-        call = {"agent": agent.name, "name": tool.name, "args": args, "result": str(result),
-                "finished_at_seconds": round(time.monotonic() - self.started, 1)}
-        self.tool_calls.append(call)
-        self.emit({"type": "tool", **call, "result": call["result"][:2000]})
+        self.record(agent.name, tool.name, args, result)
 
 
 def route_brief(routes: dict | None) -> str:
@@ -416,8 +439,10 @@ async def answer(question: str, hooks: TraceHooks) -> dict:
     # 3. Verify, then fix once
     check = None
     try:
-        verified = await asyncio.wait_for(Runner.run(
-            verifier, f"Route options:\n{route_brief(run.routes)}\n\nDraft:\n{draft}", context=run, hooks=hooks, max_turns=8), VERIFY_SECONDS)
+        hooks.activity("Verifier", "started")
+        fresh = recheck(draft, hooks)
+        prompt = f"Route options:\n{route_brief(run.routes)}\n\nDraft:\n{draft}\n\nFresh tool results:\n\n{fresh}"
+        verified = await asyncio.wait_for(Runner.run(verifier, prompt, hooks=hooks, max_turns=2), VERIFY_SECONDS)
         check = verified.final_output
     except Exception as e:  # out of time or a bad reply: say the check didn't finish, don't block the answer
         hooks.activity("Verifier", f"could not finish: {type(e).__name__}")
@@ -482,10 +507,15 @@ add_context_panel(app, sessions)
 
 # --- Rate limit: the app is public and every question costs Vertex AI calls ---
 
-QUESTIONS_PER_HOUR = 5
-asked: dict[str, list[float]] = {}  # ip -> times of recent questions. Per instance, in memory.
-LIMIT_MESSAGE = (f"You've asked {QUESTIONS_PER_HOUR} questions in the last hour, which is this demo's limit per visitor. "
-                 "Please try again later.")
+QUESTIONS_PER_HOUR = 30  # per visitor
+QUESTIONS_PER_DAY = 300  # across all visitors
+MAX_INSTANCES = 2  # matches --max-instances on Cloud Run: counts live in each instance's memory
+asked: dict[str, list[float]] = {}  # ip -> times of recent questions
+day_count = {"day": "", "n": 0}  # questions this instance has taken today (New York date)
+VISITOR_MESSAGE = (f"You've asked {QUESTIONS_PER_HOUR} questions in the last hour, which is this demo's limit per visitor. "
+                   "Please try again later.")
+DAILY_MESSAGE = ("This demo has answered its limit of questions for today across all visitors. "
+                 "Please try again tomorrow.")
 
 
 def client_ip(request: Request) -> str:
@@ -494,15 +524,24 @@ def client_ip(request: Request) -> str:
     return forwarded.split(",")[0].strip() or (request.client.host if request.client else "unknown")
 
 
-def over_limit(request: Request) -> bool:
+def over_limit(request: Request) -> str | None:
+    """The message to show if this question is over a limit, else None (and the question is counted).
+    The daily cap is split across instances, since they don't share memory: 150 each, 300 in all.
+    An instance that restarts starts its counts over."""
     now = time.time()
+    today = time.strftime("%Y-%m-%d", time.localtime(now - 5 * 3600))  # New York date, near enough
+    if day_count["day"] != today:
+        day_count.update(day=today, n=0)
+    if day_count["n"] >= QUESTIONS_PER_DAY // MAX_INSTANCES:
+        return DAILY_MESSAGE
     ip = client_ip(request)
     recent = [t for t in asked.get(ip, []) if now - t < 3600]
+    asked[ip] = recent
     if len(recent) >= QUESTIONS_PER_HOUR:
-        asked[ip] = recent
-        return True
-    asked[ip] = recent + [now]
-    return False
+        return VISITOR_MESSAGE
+    asked[ip].append(now)
+    day_count["n"] += 1
+    return None
 
 
 class ChatRequest(BaseModel):
@@ -526,8 +565,8 @@ def index():
 
 @app.post("/chat")
 async def chat(request: ChatRequest, http: Request):
-    if over_limit(http):
-        return JSONResponse({"response": LIMIT_MESSAGE, "session_id": request.session_id, "tool_calls": [], "map": None,
+    if refusal := over_limit(http):
+        return JSONResponse({"response": refusal, "session_id": request.session_id, "tool_calls": [], "map": None,
                              "verification": None}, status_code=429)
     session_id = request.session_id or str(uuid.uuid4())
     sessions[session_id] = AgentContexts()
@@ -544,9 +583,9 @@ async def chat(request: ChatRequest, http: Request):
 @app.get("/run")
 async def run(message: str, http: Request, session_id: str | None = None):
     """The same pipeline as /chat, streamed as Server-Sent Events for the page."""
-    if over_limit(http):
+    if refusal := over_limit(http):
         async def refused():
-            yield f"data: {json.dumps({'type': 'error', 'message': LIMIT_MESSAGE})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': refusal})}\n\n"
         return StreamingResponse(refused(), media_type="text/event-stream")
     session_id = session_id or str(uuid.uuid4())
     sessions[session_id] = AgentContexts()

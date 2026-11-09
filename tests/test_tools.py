@@ -238,7 +238,7 @@ def test_time_filters_never_change_the_average_check(trip):
     ref = trip["routes"]["fastest"]["route_ref"]
     morning = tools.crash_summary(ref, {"hour_from": 7, "hour_to": 10})
     every = tools.crash_summary(ref)
-    assert morning["above_class_average"] == every["above_class_average"]
+    assert morning["above_average"] == every["above_average"]
     assert [s["above_average"] for s in morning["hotspots"]] == [s["above_average"] for s in every["hotspots"]]
     assert morning["crashes_matching_filters"]["n"] < every["all_crashes"]["n"]
 
@@ -248,3 +248,8 @@ def test_projects_have_names_not_record_numbers(trip):
         for result in tools.before_after(route["route_ref"]).get("results", []):
             for project in result["projects"]:
                 assert "bike route" not in project["project"] and not project["project"].startswith("sip-")
+
+
+def test_one_segment_gets_the_same_verdict_both_ways(trip):
+    for spot in tools.crash_summary(trip["routes"]["fastest"]["route_ref"])["hotspots"]:
+        assert tools.crash_summary([spot["edge_id"]])["above_average"] == spot["above_average"]

@@ -498,13 +498,17 @@ def crash_summary(edge_ids, filters: dict | None = None) -> dict:
     factors = pd.concat([found.contributing_factor_vehicle_1, found.contributing_factor_vehicle_2]).dropna()
     hours = pd.cut(found.hour, [-1, 5, 9, 15, 19, 23], labels=["overnight 0-5", "morning 6-9", "midday 10-15", "evening 16-19", "night 20-23"])
     expected = _expected(segments)
+    borough_expected = float((segments.borough.map(BOROUGH_RATE).fillna(0) * segments.mile_years).sum())
     total = count_range(len(every))
     return {
         "edge_count": len(ids), "miles": round(segments.length_mi.sum(), 2),
         "filters": filters or {},
         "crashes_matching_filters": count_range(len(found)), "severe_matching_filters": count_range(found.severe.sum()),
         "killed_matching_filters": int(found.killed.sum()),
-        "all_crashes": total, "class_expected_all_crashes": round(expected, 1), "above_class_average": bool(total["low"] > expected),
+        "all_crashes": total, "class_expected_all_crashes": round(expected, 1),
+        "borough_expected_all_crashes": round(borough_expected, 1),
+        # The same rule as a hotspot's: the whole range above the class or the borough average
+        "above_average": bool(total["low"] > min(expected, borough_expected)),
         "too_sparse_for_segment_conclusions": len(every) < SPARSE_CRASHES,
         "by_cause": _top(factors[~factors.isin(NOT_A_CAUSE)]),
         "by_time_of_day": {str(k): int(v) for k, v in hours.value_counts().sort_index().items()},
