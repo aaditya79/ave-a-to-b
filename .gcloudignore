@@ -1,0 +1,11 @@
+# What `gcloud run deploy --source .` leaves out of the upload. data/*.parquet ships; downloads don't.
+.git/
+.gitignore
+.venv/
+__pycache__/
+.env
+data/raw/
+cache/
+build/
+tests/
+docs/
