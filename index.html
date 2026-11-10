@@ -50,10 +50,10 @@
             a { color: var(--blue); }
 
             /* --- Layout: the panel takes half the screen, the map the other half --- */
-            .app { display: grid; grid-template-columns: max(520px, 50%) minmax(0, 1fr); height: 100vh; }
+            .app { display: grid; grid-template-columns: max(520px, 50%) minmax(0, 1fr); height: calc(100vh - 52px); }
             .panel { overflow-y: auto; overflow-x: hidden; padding: 24px 28px 48px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
             .panel > * { flex: none; }
-            .mapwrap { position: relative; height: 100vh; min-width: 0; }
+            .mapwrap { position: relative; height: 100%; min-width: 0; }
             #map { position: absolute; inset: 0; background: #eef0f2; }
             @media (max-width: 960px) {
                 .app { display: flex; flex-direction: column; height: auto; }
@@ -82,9 +82,23 @@
             .small { font-size: 14px; color: var(--muted); }
             .hidden { display: none !important; }
 
+            /* --- Header bar, in the style of subway signage --- */
+            .signbar { height: 52px; background: #111; color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; border-top: 3px solid #111; box-shadow: inset 0 3px 0 #fff; position: relative; z-index: 1200; }
+            .sign-brand { display: flex; align-items: center; gap: 6px; color: #fff; text-decoration: none; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+            .sign-bullet { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 17px; color: #fff; }
+            .sign-bullet.a { background: var(--blue); }
+            .sign-bullet.b { background: var(--orange); }
+            .sign-arrow { font-size: 18px; font-weight: 700; margin: 0 1px; }
+            .sign-name { font-weight: 700; font-size: 20px; letter-spacing: -0.01em; margin-left: 8px; }
+            .sign-links { display: flex; gap: 18px; }
+            .sign-links a { color: #fff; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-weight: 500; font-size: 15px; text-decoration: none; border-bottom: 2px solid transparent; }
+            .sign-links a:hover { border-bottom-color: #fff; }
+            @media (max-width: 960px) { .signbar { height: 48px; padding: 0 14px; } .sign-name { font-size: 18px; } .sign-links a { font-size: 14px; } }
+
             /* --- Hero --- */
-            .hero-title { font-size: 30px; line-height: 1.15; margin: 4px 0 6px; letter-spacing: -0.02em; font-weight: 700; }
-            .hero-sub { margin: 0 0 14px; color: var(--muted); font-size: 16px; }
+            .hero-title { font-size: 30px; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.02em; font-weight: 700; }
+            .hero-sub { margin: 0; color: var(--muted); font-size: 16px; }
+
             .hero-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
             .hero-card { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; border-top: 4px solid var(--blue); }
             .hero-card:nth-child(2) { border-top-color: var(--orange); }
@@ -96,7 +110,8 @@
             .stat-strip > div + div { border-left: 1px solid rgba(255, 255, 255, 0.18); }
             .stat-strip b { font-size: 22px; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
             .stat-strip span { font-size: 13px; color: #c9d1dc; line-height: 1.3; }
-            .app.has-results .hero-cards, .app.has-results .hero-sub, .app.has-results .stat-strip { display: none; }
+            .app.has-results .hero-more, .app.has-results .hero-sub { display: none; }
+            .hero-more { display: grid; gap: 0; }
             .app.has-results .hero-title { font-size: 22px; }
 
             /* --- Saved examples: never styled like a live result --- */
@@ -367,43 +382,19 @@
         </style>
     </head>
     <body>
+        <header class="signbar">
+            <a class="sign-brand" href="/" aria-label="Ave A to B, home">
+                <span class="sign-bullet a">A</span><span class="sign-arrow" aria-hidden="true">→</span><span class="sign-bullet b">B</span>
+                <span class="sign-name">Ave A to B</span>
+            </a>
+            <nav class="sign-links"></nav>
+        </header>
         <div class="app" id="app">
             <div class="panel" id="panel">
-                <header>
-                    <div class="brand">
-                        <svg width="84" height="34" viewBox="0 0 84 34" aria-hidden="true">
-                            <circle cx="17" cy="17" r="16" fill="#0039A6" />
-                            <text x="17" y="23" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#fff">A</text>
-                            <path d="M37 17h10m-4.5-5 5 5-5 5" stroke="#0B1F3A" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round" />
-                            <circle cx="67" cy="17" r="16" fill="#FF6319" />
-                            <text x="67" y="23" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#fff">B</text>
-                        </svg>
-                        <h1>Ave A to B</h1>
-                    </div>
-                </header>
 
                 <section class="hero" id="hero">
-                    <h2 class="hero-title">Which way should I bike?</h2>
+                    <h1 class="hero-title">Which way should I bike?</h1>
                     <p class="hero-sub">Ave A to B compares three NYC bike routes by crash risk, adjusted for how many people ride each street.</p>
-                    <div class="hero-cards">
-                        <div class="hero-card">
-                            <h3>What it explores</h3>
-                            <p>Police-reported crashes that hurt a cyclist on every street since 2021, weighed against how many people ride each one, so a busy lane isn't mistaken for a dangerous one.</p>
-                        </div>
-                        <div class="hero-card">
-                            <h3>Who it's for</h3>
-                            <p>Anyone who bikes in New York City and wants to know what a calmer route costs in minutes, from daily commuters to someone planning a first ride to work.</p>
-                        </div>
-                        <div class="hero-card">
-                            <h3>How to use it</h3>
-                            <p>Enter where you start and where you're going, pick when you ride, and press Compare routes. AI agents check three routes in about a minute. Or tap an example below to see a saved result right away.</p>
-                        </div>
-                    </div>
-                    <div class="stat-strip" id="statStrip" aria-label="About the data">
-                        <div><b id="statCrashes">…</b><span>bike crashes since 2021</span></div>
-                        <div><b id="statSegments">…</b><span>street segments analyzed</span></div>
-                        <div><b id="statRoutes">3</b><span>routes compared per trip</span></div>
-                    </div>
                 </section>
 
                 <section class="card" id="formCard">
@@ -437,6 +428,28 @@
                             <input class="input" id="question" placeholder="Is biking in Brooklyn safe?" maxlength="500" />
                             <button class="btn" id="askGo" type="button" style="flex: none">Ask</button>
                         </div>
+                    </div>
+                </section>
+
+                <section class="hero-more" id="heroMore">
+                    <div class="hero-cards">
+                        <div class="hero-card">
+                            <h3>What it explores</h3>
+                            <p>Cyclist crashes on every street, adjusted for riders.</p>
+                        </div>
+                        <div class="hero-card">
+                            <h3>Who it's for</h3>
+                            <p>NYC riders trading minutes for calmer streets.</p>
+                        </div>
+                        <div class="hero-card">
+                            <h3>How to use it</h3>
+                            <p>Enter From and To, or tap an example above.</p>
+                        </div>
+                    </div>
+                    <div class="stat-strip" id="statStrip" aria-label="About the data">
+                        <div><b id="statCrashes">…</b><span>crashes that hurt a cyclist since 2021</span></div>
+                        <div><b id="statSegments">…</b><span>street segments analyzed</span></div>
+                        <div><b id="statRoutes">3</b><span>routes compared per trip</span></div>
                     </div>
                 </section>
 
@@ -639,7 +652,7 @@
             }
 
             // --- Map ---
-            const map = L.map("map", { zoomControl: false, zoomSnap: 0.25 }).setView([40.73, -73.97], 12);
+            const map = L.map("map", { zoomControl: false, zoomSnap: 0.25 }).setView([40.716, -73.975], 12.75);
             L.control.zoom({ position: "topright" }).addTo(map);
             map.attributionControl.setPrefix(false);
             // A light, calm basemap: the Positron style from OpenFreeMap (free, no key), drawn with MapLibre.
