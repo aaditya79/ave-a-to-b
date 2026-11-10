@@ -1123,6 +1123,20 @@ async def followup(request: FollowupRequest, http: Request):
 _explore: dict = {}
 
 
+_saved: dict[str, bytes] = {}
+
+
+@app.get("/examples")
+def examples(http: Request):
+    """The saved example runs (data/saved_examples.json), which the page replays under a "Saved example" banner."""
+    if not _saved:
+        raw = (HERE / "data" / "saved_examples.json").read_bytes()
+        _saved.update(raw=raw, gz=gzip.compress(raw, 6))
+    if "gzip" in http.headers.get("accept-encoding", ""):
+        return Response(_saved["gz"], media_type="application/json", headers={"Content-Encoding": "gzip", "Cache-Control": "no-cache"})
+    return Response(_saved["raw"], media_type="application/json", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/stats")
 def stats():
     """The numbers in the page's stat strip, counted from the loaded data."""

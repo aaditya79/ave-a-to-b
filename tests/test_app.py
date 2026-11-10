@@ -387,3 +387,14 @@ def test_a_researcher_that_answers_on_retry_is_not_unchecked(monkeypatch):
 def test_stat_strip_counts_come_from_the_data():
     s = client.get("/stats").json()
     assert s == {"crashes_since_2021": 34465, "street_segments": 163383, "routes_per_trip": 3}  # README section 2
+
+
+def test_every_saved_example_is_a_full_dated_answer():
+    saved = client.get("/examples").json()
+    assert set(saved) == {"columbia-union-sq", "prospect-heights-dumbo", "astoria-times-sq"}
+    for ex in saved.values():
+        from datetime import datetime
+        assert datetime.fromisoformat(ex["saved_at"]).tzinfo is not None
+        done = ex["events"][-1]
+        assert done["type"] == "done" and done["map"]["routes"] and done["answer"]["summary"]
+        assert not any(e["type"] == "start" for e in ex["events"])  # no stale session id

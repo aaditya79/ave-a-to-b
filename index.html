@@ -99,6 +99,14 @@
             .app.has-results .hero-cards, .app.has-results .hero-sub, .app.has-results .stat-strip { display: none; }
             .app.has-results .hero-title { font-size: 22px; }
 
+            /* --- Saved examples: never styled like a live result --- */
+            .saved-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 16px; border-radius: var(--radius); background: #fff8e1; border: 2px dashed #c58a00; color: #5c4100; font-size: 15px; }
+            .saved-banner .btn { margin-left: auto; }
+            .saved-tag { background: #5c4100; color: #fff; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 6px; }
+            .saved-map-tag { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 650; background: #5c4100; color: #fff; font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 999px; pointer-events: none; }
+            .app.saved #summary, .app.saved .card.route, .app.saved #traceCard { outline: 2px dashed #e0b84d; outline-offset: -2px; }
+            @media (max-width: 960px) { .saved-map-tag { top: auto; bottom: 28px; } }
+
             /* --- How it works --- */
             #how h2 { font-size: 16px; margin-bottom: 12px; }
             ol.how { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
@@ -362,7 +370,7 @@
                         </div>
                         <div class="hero-card">
                             <h3>How to use it</h3>
-                            <p>Enter where you start and where you're going, pick when you ride, and press Compare routes. AI agents check three routes in about a minute. Or tap an example below.</p>
+                            <p>Enter where you start and where you're going, pick when you ride, and press Compare routes. AI agents check three routes in about a minute. Or tap an example below to see a saved result right away.</p>
                         </div>
                     </div>
                     <div class="stat-strip" id="statStrip" aria-label="About the data">
@@ -393,9 +401,9 @@
                     <p class="small hint">Just fill in From and To. You don't need to type a question. Answers take about a minute.</p>
                     <div class="examples">
                         <span class="small">Try:</span>
-                        <button class="chip" data-start="Columbia University" data-end="Union Square, Manhattan" data-when="around 8am">Columbia → Union Sq</button>
-                        <button class="chip" data-start="Prospect Heights, Brooklyn" data-end="DUMBO, Brooklyn" data-when="in the evening, around 6pm">Prospect Heights → DUMBO</button>
-                        <button class="chip" data-start="Astoria, Queens" data-end="Times Square" data-when="">Astoria → Times Sq</button>
+                        <button class="chip" data-key="columbia-union-sq" data-start="Columbia University" data-end="Union Square, Manhattan" data-when="around 8am">Columbia → Union Sq</button>
+                        <button class="chip" data-key="prospect-heights-dumbo" data-start="Prospect Heights, Brooklyn" data-end="DUMBO, Brooklyn" data-when="in the evening, around 6pm">Prospect Heights → DUMBO</button>
+                        <button class="chip" data-key="astoria-times-sq" data-start="Astoria, Queens" data-end="Times Square" data-when="">Astoria → Times Sq</button>
                     </div>
                     <p style="margin: 14px 0 0"><button class="linkish" id="askToggle" type="button" aria-expanded="false">Or ask a question instead (for example, Is biking in Brooklyn safe?)</button></p>
                     <div class="hidden" id="askBox">
@@ -429,6 +437,11 @@
 
                 <section class="card hidden error" id="errorBox"></section>
 
+                <section class="saved-banner hidden" id="savedBanner" role="note">
+                    <span class="saved-tag">Saved example</span>
+                    <span id="savedText"></span>
+                    <button class="btn small" type="button" id="savedRerun">Run a fresh one</button>
+                </section>
                 <section class="card hidden" id="summary"></section>
                 <div id="routeCards" style="display: grid; gap: 16px"></div>
 
@@ -470,6 +483,7 @@
 
             <div class="mapwrap">
                 <div id="map"></div>
+                <div class="saved-map-tag hidden" id="savedMapTag">Saved example, not a live run</div>
                 <div class="preview-bar hidden" id="previewBar" role="status" aria-live="polite">
                     <div class="preview-text" id="previewText"></div>
                     <div class="preview-progress"><span id="previewFill"></span></div>
@@ -1499,6 +1513,10 @@
                 $("progress").classList.remove("hidden");
                 $("traceCard").classList.remove("hidden");
                 $("timer").textContent = "0:00";
+                state.saved = null;
+                $("savedBanner").classList.add("hidden");
+                $("savedMapTag").classList.add("hidden");
+                $("app").classList.remove("saved");
             }
 
             let source = null;
@@ -1787,8 +1805,43 @@
                 }
                 runTrip(trip);
             });
+            // --- Saved examples: a chip replays a recorded run at once, always under the "Saved example" banner ---
+            let savedExamples = null;
+            const loadSaved = () => (savedExamples ??= fetch("/examples").then((r) => (r.ok ? r.json() : {})).catch(() => ({})));
+            function savedWhen(iso) {
+                const d = new Date(iso);
+                return d.toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }) + " New York time";
+            }
+            function showSaved(key, ex) {
+                if (source) source.close();
+                reset(false);
+                state.trip = ex.trip;
+                state.asked = ex.question;
+                state.saved = { key, ...ex };
+                $("start").value = ex.trip.start;
+                $("end").value = ex.trip.end;
+                $("when").value = ex.trip.when || "";
+                history.replaceState(null, "", "?" + new URLSearchParams({ example: key }));
+                // The banner goes up before anything renders, so no part of a saved run shows without it
+                $("savedText").textContent = `Saved example from ${savedWhen(ex.saved_at)}. It took ${Math.round(ex.seconds)} seconds when it ran.`;
+                $("savedBanner").classList.remove("hidden");
+                $("savedMapTag").classList.remove("hidden");
+                $("app").classList.add("saved");
+                join("Lead", "Lead", "Lead", 1);
+                setChip("Lead", "running");
+                source = { close() {} }; // onDone closes the stream; a replay has none
+                for (const e of ex.events) onEvent(e);
+                $("timer").textContent = `saved, ${Math.floor(ex.seconds / 60)}:${String(Math.round(ex.seconds % 60)).padStart(2, "0")}`;
+                $("savedBanner").scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+            async function runExample(button) {
+                const trip = { start: button.dataset.start, end: button.dataset.end, when: button.dataset.when };
+                const ex = (await loadSaved())[button.dataset.key];
+                return ex ? showSaved(button.dataset.key, ex) : runTrip(trip);
+            }
+            $("savedRerun").addEventListener("click", () => state.saved && runTrip(state.saved.trip));
             for (const button of document.querySelectorAll(".examples .chip[data-start]")) {
-                button.addEventListener("click", () => runTrip({ start: button.dataset.start, end: button.dataset.end, when: button.dataset.when }));
+                button.addEventListener("click", () => runExample(button));
             }
             $("askToggle").addEventListener("click", () => {
                 const open = $("askBox").classList.toggle("hidden") === false;
@@ -1809,6 +1862,8 @@
                 $("question").value = query.get("q");
                 $("askBox").classList.remove("hidden");
                 askFree();
+            } else if (query.get("example") && [...document.querySelectorAll(".chip[data-key]")].some((c) => c.dataset.key === query.get("example"))) {
+                runExample([...document.querySelectorAll(".chip[data-key]")].find((c) => c.dataset.key === query.get("example")));
             } else if (query.get("from") && query.get("to")) runTrip({ start: query.get("from"), end: query.get("to"), when: query.get("when") || "" });
             // Explore mode is on before any trip; on a phone its layer list starts folded so the map shows
             else setExplore(true).then(() => matchMedia("(max-width: 960px)").matches && ($("explore").open = false));
