@@ -145,6 +145,8 @@
 
             /* --- Clarifying question --- */
             .bubble { background: var(--blue-soft); border-radius: 12px 12px 12px 4px; padding: 12px 16px; }
+            #followThread .you { margin: 14px 0 6px; font-size: 15px; }
+            #followThread .bubble div:last-child { white-space: pre-wrap; }
             .bubble .who { font-size: 13px; font-weight: 600; color: var(--blue); margin-bottom: 4px; }
 
             /* --- Results --- */
@@ -404,6 +406,18 @@
                 <section class="card hidden" id="changes"><h2>New lanes and redesigns</h2><div id="changeList"></div></section>
                 <section class="card hidden" id="notes"><h2>Also worth knowing</h2><div id="noteList"></div></section>
                 <section class="card hidden" id="limits"><h2>What this can't tell you</h2><ul class="plain small" id="limitList"></ul></section>
+
+                <section class="card hidden" id="followup">
+                    <h2>Ask a follow-up</h2>
+                    <p class="small" style="margin-top: 0">About these routes, answered from the results above. A different start or end runs a new comparison.</p>
+                    <div class="examples" id="followChips"></div>
+                    <div id="followThread"></div>
+                    <div class="row" style="margin-top: 12px">
+                        <input class="input" id="followQ" placeholder="For example, what if I ride at night?" maxlength="500" autocomplete="off" />
+                        <button class="btn" id="followGo" type="button" style="flex: none">Ask</button>
+                    </div>
+                    <p class="small" id="followLeft" style="margin: 8px 0 0"></p>
+                </section>
 
                 <section class="card hidden" id="traceCard">
                     <details>
@@ -1278,7 +1292,7 @@
                 closeTip();
                 for (const layer of [routeLayer, projectLayer, sliderLayer, labelLayer, spotLayer, pinLayer]) layer.clearLayers();
                 $("legendProject").classList.add("hidden");
-                for (const id of ["summary", "sliderBox", "spots", "changes", "notes", "limits", "clarify", "errorBox", "legend"]) $(id).classList.add("hidden");
+                for (const id of ["summary", "sliderBox", "spots", "changes", "notes", "limits", "followup", "clarify", "errorBox", "legend"]) $(id).classList.add("hidden");
                 $("app").classList.remove("has-results");
                 $("routeCards").replaceChildren();
                 $("agents").replaceChildren();
@@ -1397,9 +1411,46 @@
                 showNotes(notes);
                 showLimits();
                 $("summary").scrollIntoView({ behavior: "smooth", block: "start" });
+                setupFollowup(e.map);
                 state.session = null; // a new question starts fresh
                 state.messages = [];
             }
+            // --- Follow-up questions: answered from this trip's results; a new trip reruns the comparison ---
+            function setupFollowup(map_) {
+                state.follow = { session: state.session, start: map_.start, end: map_.end, when: state.context?.when || state.trip?.when || "" };
+                const rec = LABEL[map_.recommended_route] || "Balanced";
+                const why = map_.recommended_route === "fastest" ? "Why is the Fastest route recommended?" : `Why is the ${rec} route safer?`;
+                $("followChips").replaceChildren(...[why, "What's the worst stretch?", "What if I ride at night?"].map((q) =>
+                    el("button", { class: "chip", type: "button", onclick: () => sendFollowup(q) }, q)));
+                $("followThread").replaceChildren();
+                $("followLeft").textContent = "";
+                $("followup").classList.remove("hidden");
+            }
+            async function sendFollowup(text) {
+                text = (text || "").trim();
+                if (!text || !state.follow) return;
+                $("followQ").value = "";
+                const answer = el("div", { class: "bubble" }, el("div", { class: "who" }, "Ave A to B"), el("div", {}, "Thinking…"));
+                $("followThread").append(el("p", { class: "you" }, el("b", {}, "You: "), text), answer);
+                $("followGo").disabled = true;
+                let reply;
+                try {
+                    const f = state.follow;
+                    reply = await (await fetch("/followup", { method: "POST", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ message: text, session_id: f.session, when: f.when,
+                            start: { lat: f.start.lat, lon: f.start.lon }, end: { lat: f.end.lat, lon: f.end.lon } }) })).json();
+                } catch (e) {
+                    reply = { response: "Lost the connection to the server. Please try again." };
+                }
+                $("followGo").disabled = false;
+                answer.lastChild.textContent = reply.response;
+                if (reply.session_id) state.follow.session = reply.session_id;
+                if (reply.followups_left != null) $("followLeft").textContent = `${reply.followups_left} follow-up${reply.followups_left === 1 ? "" : "s"} left for this trip.`;
+                if (reply.rerun) setTimeout(() => ask(reply.rerun), 900);
+            }
+            $("followGo").addEventListener("click", () => sendFollowup($("followQ").value));
+            $("followQ").addEventListener("keydown", (e) => e.key === "Enter" && sendFollowup($("followQ").value));
+
             function fail(message) {
                 if (source) source.close();
                 busy(false);
