@@ -964,7 +964,7 @@
                     const s = state.steps[h.from];
                     const took = s?.at != null ? `took ${secs(h.at_seconds - s.at)}` : "";
                     const head = el("div", { class: "tl-head", style: "margin-top:10px" }, ...arrow, el("span", { class: "small" }, h.status === "failed" ? "failed" : "findings"), el("span", { class: "when" }, `${secs(h.at_seconds)} · ${took}`));
-                    (s?.node || $("trace")).append(head, el("div", { class: "tl-text" }, h.text));
+                    (s?.node || $("trace")).append(head, el("div", { class: "tl-text" }, h.text?.trim() || "No findings came back from this round."));
                 } else if (h.kind === "gap") {
                     step(agentColor("Lead"), [who("Lead"), el("span", { class: "small" }, "gap decision"), when], el("div", { class: "tl-text" }, h.text));
                 } else if (h.kind === "draft") {
