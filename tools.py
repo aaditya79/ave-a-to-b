@@ -162,6 +162,13 @@ def count_range(n: float) -> dict:
 # --- Geocoding ---
 
 _geocoded: dict[str, dict] = {}
+
+# The Popular rides loops start and finish at one point. "Ride here" fills From and To with "<loop> start, <place>",
+# so that name finds the loop's own starting point.
+LOOP_STARTS = {f"{r['name']} start, {r['start']}": (r["line"][0][0][0], r["line"][0][0][1])
+               for r in json.loads((DATA / "popular_rides.json").read_text()) if r["kind"] == "loop"}
+for _name, (_lat, _lon) in LOOP_STARTS.items():
+    _geocoded[_name] = {"label": _name, "lat": _lat, "lon": _lon, "source": "loop start"}
 _nominatim_lock = threading.Lock()
 LAT_LON = re.compile(r"^\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*$")
 BOX = (40.45, 40.95, -74.30, -73.65)

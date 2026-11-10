@@ -642,3 +642,79 @@ def test_your_rides_card_in_history(page, base_url, monkeypatch):
     assert page.locator(".badge.off").count() == 3
     assert page.evaluate("readHistory().find((x) => x.id === 2).ridden") is True  # kept in History, and so in the session
     page.evaluate("localStorage.clear()")
+
+
+MAP_STATE = """({ ride: rideLayer.getLayers().length, rideName: document.querySelector('.ride.active')?.dataset.ride || null,
+    loop: loopLayer.getLayers().length, routes: routeLayer.getLayers().length,
+    detail: !document.getElementById('rideDetail').classList.contains('hidden'), loopCard: !document.getElementById('loopCard').classList.contains('hidden') })"""
+
+
+def test_picking_another_ride_clears_the_last_one(page, base_url):
+    page.goto(base_url + "/#popular")
+    page.wait_for_selector(".ride")
+    page.locator(".ride", has_text="Central Park loop").click()
+    page.locator("#rideDetail button", has_text="Ride here").click()  # the loop is drawn with its card
+    assert page.evaluate(MAP_STATE)["loop"] > 0
+    page.locator(".ride", has_text="Hudson River Greenway").click()
+    now = page.evaluate(MAP_STATE)
+    assert now == {"ride": 1, "rideName": "Hudson River Greenway", "loop": 0, "routes": 0, "detail": True, "loopCard": False}
+    hudson = page.evaluate("rideLayer.getLayers()[0].getLatLngs().length")
+    assert hudson == page.evaluate("rides.find((r) => r.name === 'Hudson River Greenway').line[0].length")
+    # A route result, then a ride: the routes go
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector("#summary .support")
+    page.locator(".ride", has_text="Hudson River Greenway").click()
+    assert page.evaluate(MAP_STATE)["routes"] == 0 and not page.is_visible("#summary")
+
+
+def test_a_loop_fills_its_start_and_never_shows_the_red_error(page, base_url):
+    page.goto(base_url + "/#popular")
+    page.wait_for_selector(".ride")
+    runs = []
+    page.route("**/run?*", lambda r: (runs.append(r.request.url), r.abort()))
+    page.locator(".ride", has_text="Central Park loop").click()
+    page.locator("#rideDetail button", has_text="Ride here").click()
+    assert page.input_value("#start") == page.input_value("#end") == "Central Park loop start, Columbus Circle"
+    assert "This is a loop, so there's nothing to compare. It starts and finishes here." in page.inner_text("#loopNote")
+    page.click("#go")
+    assert runs == [] and not page.is_visible("#errorBox") and page.is_visible("#loopNote")
+    # Get me to the start: From clears, To stays the loop's start, and Compare routes runs as usual
+    page.click("#loopToStart")
+    assert page.input_value("#start") == "" and page.input_value("#end") == "Central Park loop start, Columbus Circle"
+    page.click("#go")
+    assert runs == [] and not page.is_visible("#errorBox")  # From still empty: the gray note, not the red box
+    page.fill("#start", "Columbia University")
+    page.click("#go")
+    page.wait_for_timeout(300)
+    assert len(runs) == 1 and "Central+Park+loop+start" in runs[0]
+    page.unroute("**/run?*")
+
+
+def test_the_loop_start_is_a_place_routing_knows():
+    place = app.tools.geocode("Central Park loop start, Columbus Circle")
+    assert (round(place["lat"], 4), round(place["lon"], 4)) == (40.7672, -73.9775)
+    assert "routes" in app.tools.route_options("Columbia University", "Central Park loop start, Columbus Circle")
+
+
+def test_compare_routes_is_clickable_after_ride_here_and_says_why_when_it_is_not(page, base_url):
+    page.goto(base_url + "/#popular")
+    page.wait_for_selector(".ride")
+    page.locator(".ride", has_text="Hudson River Greenway").click()
+    page.locator("#rideDetail button", has_text="Ride here").click()
+    assert (page.input_value("#start"), page.input_value("#end")) == ("Battery Park", "George Washington Bridge")
+    assert page.is_enabled("#go") and not page.is_visible("#formNote")
+    page.evaluate("busy(true)")
+    assert not page.is_enabled("#go") and "Comparing routes for this trip now" in page.inner_text("#formNote")
+    page.locator(".ride", has_text="Central Park loop").click()  # picking a ride stops a running trip
+    assert page.is_enabled("#go") and not page.is_visible("#formNote")
+
+
+def test_the_empty_form_message_is_gray_not_red(page, base_url):
+    page.goto(base_url)
+    page.fill("#start", "")
+    page.fill("#end", "")
+    page.click("#go")
+    assert page.inner_text("#formNote") == "Enter where you start and where you're going."
+    assert not page.is_visible("#errorBox")
+    color = page.evaluate("getComputedStyle(document.getElementById('formNote')).color")
+    assert color == "rgb(75, 87, 103)"  # --muted

@@ -170,6 +170,8 @@
             .hist-item b { display: block; font-size: 15px; }
             .hist-item span { font-size: 13px; color: var(--muted); }
             .hist-row { display: grid; gap: 4px; }
+            .form-note { margin: 8px 0 0; color: var(--muted); }
+            .loop-note { margin: 8px 0 0; padding: 8px 12px; border-radius: 8px; background: var(--blue-soft); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
             .rode { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; padding: 2px 4px; justify-self: start; min-height: 24px; }
             .rode input { width: 18px; height: 18px; accent-color: var(--blue); margin: 0; }
             .ride-stats { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 6px 0 12px; background: var(--bg); display: grid; gap: 10px; }
@@ -503,6 +505,11 @@
                             <button class="btn primary" id="go" type="submit" style="flex: none; justify-content: center">Compare routes</button>
                         </div>
                     </form>
+                    <p class="small form-note hidden" id="formNote" role="status"></p>
+                    <div class="loop-note hidden" id="loopNote" role="note">
+                        <p class="small" style="margin: 0">This is a loop, so there's nothing to compare. It starts and finishes here.</p>
+                        <button class="btn small" type="button" id="loopToStart">Get me to the start</button>
+                    </div>
                     <p class="small hint">Just fill in From and To. You don't need to type a question. Answers take about a minute.</p>
                     <div class="examples">
                         <span class="small">Try:</span>
@@ -1877,6 +1884,12 @@
             }
             function busy(on) {
                 for (const id of ["go", "send", "askGo"]) $(id).disabled = on;
+                formNote(on ? "Comparing routes for this trip now. The button comes back when it finishes." : "");
+            }
+            // A small gray line under Compare routes: why the button is off, or what the form still needs
+            function formNote(text) {
+                $("formNote").textContent = text || "";
+                $("formNote").classList.toggle("hidden", !text);
             }
 
             function showRoutes(data) {
@@ -2237,6 +2250,18 @@
                 ];
             }
             function showRide(r) {
+                // One ride or one set of routes on the map at a time: clear a loop, a route result, or a trip still running
+                closeRide();
+                closeLoop();
+                if (source) source.close();
+                if (state?.map || !$("progress").classList.contains("hidden")) {
+                    reset(false);
+                    $("progress").classList.add("hidden");
+                    $("traceCard").classList.add("hidden");
+                    clearInterval(timer);
+                    history.replaceState(null, "", "/");
+                }
+                busy(false);
                 openRide = r.name;
                 for (const c of document.querySelectorAll(".ride")) {
                     c.classList.toggle("active", c.dataset.ride === r.name);
@@ -2343,7 +2368,15 @@
 
             // --- Loops from Popular rides: Ride here shows the ride's own path, with no agent run ---
             const loopLayer = L.layerGroup().addTo(map);
-            let openLoop = null;
+            let openLoop = null, loopStart = null; // loopStart: the text Ride here put in From and To
+            // Get me to the start: From is cleared for the rider's own place, To stays the loop's start
+            $("loopToStart").addEventListener("click", () => {
+                $("loopNote").classList.add("hidden");
+                $("start").value = "";
+                $("end").value = loopStart || $("end").value;
+                $("start").focus();
+                formNote("Type or pick where you are, then Compare routes to get to the start.");
+            });
             const bearing = (a, b) => (Math.atan2(b[0] - a[0], (b[1] - a[1]) * Math.cos((a[0] * Math.PI) / 180)) * 180) / Math.PI;
             function showLoop(r) {
                 closeRide();
@@ -2358,6 +2391,11 @@
                 clearInterval(timer);
                 if ($("exploreOn").checked) setExplore(false);
                 openLoop = r.slug;
+                loopStart = `${r.name} start, ${r.start}`;
+                $("start").value = loopStart;
+                $("end").value = loopStart;
+                formNote("");
+                $("loopNote").classList.remove("hidden");
                 history.replaceState(null, "", "/?" + new URLSearchParams({ ride: r.slug }));
                 const line = r.line[0];
                 L.polyline(line, { color: "#0b1f3a", weight: 6, opacity: 0.9 }).addTo(loopLayer);
@@ -2400,6 +2438,7 @@
                 $("loopCard").scrollIntoView({ behavior: "smooth", block: "start" });
             }
             function closeLoop() {
+                $("loopNote").classList.add("hidden");
                 if (!openLoop) return;
                 openLoop = null;
                 loopLayer.clearLayers();
@@ -2833,10 +2872,9 @@
             $("trip").addEventListener("submit", (e) => {
                 e.preventDefault();
                 const trip = { start: $("start").value.trim(), end: $("end").value.trim(), when: $("when").value };
-                if (!trip.start || !trip.end) {
-                    $("errorBox").textContent = "Enter where you start and where you're going.";
-                    return $("errorBox").classList.remove("hidden");
-                }
+                if (loopStart && trip.start === loopStart && trip.end === loopStart) return $("loopNote").classList.remove("hidden"); // a loop: nothing to compare
+                if (!trip.start || !trip.end) return formNote("Enter where you start and where you're going.");
+                formNote("");
                 runTrip(trip);
             });
             // --- Saved examples: a chip replays a recorded run at once, always under the "Saved example" banner ---
