@@ -269,3 +269,101 @@ def test_projects_have_names_not_record_numbers(trip):
 def test_one_segment_gets_the_same_verdict_both_ways(trip):
     for spot in tools.crash_summary(trip["routes"]["fastest"]["route_ref"])["hotspots"]:
         assert tools.crash_summary([spot["edge_id"]])["above_average"] == spot["above_average"]
+
+
+def test_borough_names_work_on_the_first_try(monkeypatch):
+    """'Union Square, Manhattan' must not depend on a geocoder answering: no network call is allowed here."""
+    def no_network(*args, **kwargs):
+        raise AssertionError("called the network")
+    monkeypatch.setattr(tools.httpx, "get", no_network)
+    tools._geocoded.clear()
+    union = tools.geocode("Union Square, Manhattan")
+    park = tools.geocode("Prospect Park, Brooklyn")
+    assert union["source"] == "built-in place" and abs(union["lat"] - 40.736) < 0.002 and abs(union["lon"] + 73.990) < 0.002
+    assert park["source"] == "built-in place" and abs(park["lat"] - 40.662) < 0.003
+    assert tools.geocode("the Barclays Center, Brooklyn, NY")["label"] == "Barclays Center, Brooklyn"
+    assert tools.geocode("Columbia University, New York")["label"] == "Columbia University, Manhattan"
+
+
+def test_a_borough_that_disagrees_is_not_the_landmark(monkeypatch):
+    monkeypatch.setattr(tools, "_first", lambda address, services: None)
+    tools._geocoded.clear()
+    assert "error" in tools.geocode("Union Square, Queens")
+
+
+def test_a_geocoder_timeout_falls_through_to_the_next_one(monkeypatch):
+    def slow(address):
+        raise tools.httpx.ReadTimeout("slow")
+    monkeypatch.setattr(tools, "_nominatim", slow)
+    monkeypatch.setattr(tools, "_geosearch", lambda address: {"label": "found", "lat": 40.7, "lon": -73.9, "source": "NYC GeoSearch"})
+    tools._geocoded.clear()
+    assert tools.geocode("Some Unlisted Plaza, Manhattan")["source"] == "NYC GeoSearch"
+
+
+def test_every_suggestion_names_its_borough(monkeypatch):
+    """GeoSearch labels Manhattan addresses 'New York', so the borough comes from its borough field."""
+    class Reply:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"features": [
+                {"properties": {"label": "120 BROADWAY, New York, NY, USA", "borough": "Manhattan"}},
+                {"properties": {"label": "851 UNION STREET, Brooklyn, New York, NY, USA", "borough": "Brooklyn"}},
+                {"properties": {"label": "1 MAIN STREET, Staten Island, NY, USA", "borough": "Staten Island"}}]}
+    monkeypatch.setattr(tools.httpx, "get", lambda *args, **kwargs: Reply())
+    tools._suggested.clear()
+    found = tools.suggest("Union") + tools.suggest("12 Broadway")
+    boroughs = {"Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"}
+    assert all(item["detail"] in boroughs for item in found)
+    assert {"label": "120 Broadway", "detail": "Manhattan", "value": "120 Broadway, Manhattan"} in found
+    assert found[0] == {"label": "Union Square", "detail": "Manhattan", "value": "Union Square, Manhattan"}
+
+
+def test_avoiding_a_stretch_routes_around_it(trip):
+    balanced = tools.resolve(trip["routes"]["balanced"]["route_ref"])
+    spot = tools.standout_segments(balanced)["hotspots"][0]["edge_id"]
+    assert spot in balanced
+    around = tools.route_for_lambda(COLUMBIA, UNION_SQUARE, 1.0, [spot])
+    assert "error" not in around and around["avoided"] == [spot]
+    assert spot not in tools.resolve(around["route_ref"])
+    assert around["minutes"] >= trip["routes"]["fastest"]["minutes"]
+    assert "error" in tools.route_for_lambda(COLUMBIA, UNION_SQUARE, 1.0, ["not-an-edge"])
+
+
+def test_watch_out_tips_follow_the_main_cause():
+    assert "yield" in tools.watch_out_tip("Failure to Yield Right-of-Way")
+    assert "Distracted" in tools.watch_out_tip("Driver Inattention/Distraction")
+    assert "too fast" in tools.watch_out_tip("Unsafe Speed")
+    assert "turning" in tools.watch_out_tip("Turning Improperly")
+    assert "trucks" in tools.watch_out_tip("Oversized Vehicle")
+    assert "door" in tools.watch_out_tip("Passenger opened door")
+    assert tools.watch_out_tip(None) == tools.DEFAULT_TIP == tools.watch_out_tip("Something new")
+    for _, tip in tools.TIPS:  # general advice only: no odds, no rates, no blame words
+        assert not any(word in tip.lower() for word in ("%", "odds", "chance", "dangerous", "per "))
+    top = tools.crashes.contributing_factor_vehicle_1.value_counts().index[:20]
+    covered = [c for c in top if c not in tools.NOT_A_CAUSE and c != "Other Vehicular"]
+    assert all(tools.watch_out_tip(c) != tools.DEFAULT_TIP for c in covered), [c for c in covered if tools.watch_out_tip(c) == tools.DEFAULT_TIP]
+
+
+def test_standout_stretches_carry_a_tip(trip):
+    spots = tools.standout_segments(tools.resolve(trip["routes"]["fastest"]["route_ref"]))["hotspots"]
+    assert spots and all(s["tip"] == tools.watch_out_tip(s["main_cause"]) for s in spots)
+
+
+def test_area_summary_gives_borough_numbers():
+    queens = tools.area_summary("Queens")
+    assert queens["area"] == "Queens" and queens["compared_with_citywide"].endswith("lower")
+    assert 0 < queens["share_protected_lanes"] < 1 and len(queens["corridors_that_stand_out"]) == 3
+    assert all(c["crashes"] > c["similar_streets_expected"] for c in queens["corridors_that_stand_out"])
+    city = tools.area_summary("New York City")
+    assert city["compared_with_citywide"] is None and all(", " in c["street"] for c in city["corridors_that_stand_out"])
+    assert "error" in tools.area_summary("Astoria")
+    assert "Queens" in tools.area_text(queens) and "per mile" in tools.area_text(queens)
+
+
+def test_queens_answer_carries_the_riders_caveat():
+    text = tools.area_text(tools.area_summary("Queens"))
+    assert "fewer people riding there, not only safer streets" in text
+    assert "risk per rider can't be compared between boroughs" in text
+    assert "safer" not in text.replace("not only safer streets", "") and "less safe" not in text

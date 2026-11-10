@@ -25,6 +25,11 @@ DOCS = ROOT / "docs"
 NOT_A_CAUSE = "('Unspecified', 'Does Not Apply')"
 
 
+def routed(runs: list[dict]) -> list[dict]:
+    """The runs that answered with routes; a clarifying question has none."""
+    return [run for run in runs if run.get("map")]
+
+
 def route_rows(runs: list[dict]) -> pd.DataFrame:
     rows = []
     for number, run in enumerate(runs, start=1):
@@ -132,7 +137,7 @@ WHERE b.treatment = '{treatment}' AND {match}
 
 
 def main():
-    runs = json.loads((DOCS / "traces.json").read_text())
+    runs = routed(json.loads((DOCS / "traces.json").read_text()))
     routes = route_rows(runs)
     routes.to_csv(DOCS / "sample_routes.csv", index=False)
     database = duckdb.connect()

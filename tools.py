@@ -149,6 +149,99 @@ LAT_LON = re.compile(r"^\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*$")
 BOX = (40.45, 40.95, -74.30, -73.65)
 GEOSEARCH_CONFIDENCE = 0.8
 HOUSE_NUMBER = re.compile(r"^\s*\d+[A-Za-z]?(-\d+)?\s+\S")
+# Common places, so landmarks work on the first try without a network call. The page's autocomplete
+# offers the same list (GET /places). Coordinates are from OpenStreetMap.
+PLACES = [
+    ("Columbia University", "Manhattan", 40.80775, -73.96249, []),
+    ("Union Square", "Manhattan", 40.73607, -73.99019, []),
+    ("Times Square", "Manhattan", 40.75701, -73.98597, []),
+    ("Grand Central", "Manhattan", 40.75269, -73.97725, ["grand central terminal", "grand central station"]),
+    ("NYU", "Manhattan", 40.72943, -73.99722, ["new york university", "nyu bobst library"]),
+    ("Washington Square Park", "Manhattan", 40.73090, -73.99760, ["washington square"]),
+    ("Penn Station", "Manhattan", 40.75129, -73.99036, ["pennsylvania station"]),
+    ("Columbus Circle", "Manhattan", 40.76807, -73.98189, []),
+    ("Bryant Park", "Manhattan", 40.75375, -73.98354, []),
+    ("Hudson Yards", "Manhattan", 40.75591, -74.00053, []),
+    ("World Trade Center", "Manhattan", 40.71190, -74.01253, ["wtc"]),
+    ("Wall Street", "Manhattan", 40.70764, -74.01147, []),
+    ("Harlem", "Manhattan", 40.80786, -73.94547, []),
+    ("DUMBO", "Brooklyn", 40.70291, -73.99012, []),
+    ("Prospect Park", "Brooklyn", 40.66177, -73.97109, []),
+    ("Barclays Center", "Brooklyn", 40.68251, -73.97525, []),
+    ("Prospect Heights", "Brooklyn", 40.67787, -73.96847, []),
+    ("Park Slope", "Brooklyn", 40.67010, -73.98597, []),
+    ("Williamsburg", "Brooklyn", 40.71462, -73.95345, []),
+    ("Brooklyn Bridge Park", "Brooklyn", 40.69829, -73.99993, []),
+    ("Astoria", "Queens", 40.77201, -73.93027, []),
+    ("Long Island City", "Queens", 40.74553, -73.94850, ["lic"]),
+    ("Yankee Stadium", "Bronx", 40.82958, -73.92652, []),
+]
+BOROUGH_WORDS = {"manhattan": "Manhattan", "new york": "Manhattan", "brooklyn": "Brooklyn", "queens": "Queens",
+                 "bronx": "Bronx", "the bronx": "Bronx", "staten island": "Staten Island", "ny": None, "nyc": None,
+                 "new york city": None, "new york ny": None, "usa": None}
+
+
+def _split_borough(address: str) -> tuple[str, str | None]:
+    """'Union Square, Manhattan' -> ('union square', 'Manhattan'). Trailing city or borough words come off."""
+    parts = [x.strip() for x in address.lower().replace(".", "").split(",")]
+    borough = None
+    while len(parts) > 1 and parts[-1] in BOROUGH_WORDS:
+        borough = borough or BOROUGH_WORDS[parts.pop()]
+    name = re.sub(r"^the\s+", "", " ".join(", ".join(parts).split()))
+    return name, borough
+
+
+_suggested: dict[str, list[dict]] = {}
+
+
+def suggest(text: str, limit: int = 5) -> list[dict]:
+    """Autocomplete for the page: built-in places first (names starting with the text before names that
+    contain it), then NYC GeoSearch with a short timeout. If GeoSearch is slow or down, the places still answer."""
+    name, _ = _split_borough(text)
+    if len(name) < 2:
+        return []
+    hits = [(not title.lower().startswith(name), title, home) for title, home, *_ , aliases in PLACES
+            if name in title.lower() or any(name in a for a in aliases)]
+    out = [{"label": title, "detail": home, "value": f"{title}, {home}"} for _, title, home in sorted(hits)]
+    if len(out) < limit and len(name) >= 3:
+        key = text.strip().lower()
+        if key not in _suggested:
+            try:
+                response = httpx.get("https://geosearch.planninglabs.nyc/v2/autocomplete", params={"text": text}, timeout=2.5)
+                response.raise_for_status()
+                _suggested[key] = [(_tidy(f["properties"].get("label", "")), f["properties"].get("borough") or "")
+                                   for f in response.json().get("features", []) if f["properties"].get("label")]
+                if len(_suggested) > 2000:
+                    _suggested.pop(next(iter(_suggested)))
+            except (httpx.HTTPError, ValueError):
+                return out[:limit]
+        seen = {o["value"].lower() for o in out}
+        for label, borough in _suggested[key]:
+            street = label.split(", ")[0]
+            borough = borough or label.partition(", ")[2]  # GeoSearch labels Manhattan "New York", so prefer its borough field
+            value = f"{street}, {borough}" if borough else street
+            if value.lower() not in seen:
+                seen.add(value.lower())
+                out.append({"label": street, "detail": borough, "value": value})
+    return out[:limit]
+
+
+def _tidy(label: str) -> str:
+    """'851 UNION STREET, Brooklyn, New York, NY, USA' -> '851 Union Street, Brooklyn'."""
+    for tail in (", New York, NY, USA", ", NY, USA", ", USA", ", NY"):
+        label = label.removesuffix(tail)
+    parts = [re.sub(r"'S\b", "'s", p.title()) if p.isupper() else p for p in label.split(", ")]
+    parts[0] = re.sub(r"\bB'Way\b", "Broadway", parts[0])  # the city's short spelling, so it dedupes
+    return re.sub(r"\b(\d+)(St|Nd|Rd|Th)\b", lambda m: m[1] + m[2].lower(), ", ".join(parts))
+
+
+def _place(address: str) -> dict | None:
+    """A built-in place, matched on its name or alias. A borough that disagrees means it's something else."""
+    name, borough = _split_borough(address)
+    for title, home, lat, lon, aliases in PLACES:
+        if name in [title.lower(), *aliases] and borough in (None, home):
+            return {"label": f"{title}, {home}", "lat": lat, "lon": lon, "source": "built-in place"}
+    return None
 
 
 def _intersection(address: str) -> dict | None:
@@ -204,6 +297,23 @@ def _nominatim(address: str) -> dict | None:
     return {"label": found[0]["display_name"], "lat": float(found[0]["lat"]), "lon": float(found[0]["lon"]), "source": "Nominatim"}
 
 
+def _first(address: str, services: tuple) -> dict | None:
+    """The first service that finds the place. A service that times out or fails is skipped, so one slow
+    geocoder doesn't fail the whole question; the error is raised only if every service failed."""
+    failure = None
+    for service in services:
+        try:
+            place = service(address)
+        except httpx.HTTPError as e:
+            failure = e
+            continue
+        if place:
+            return place
+    if failure:
+        raise failure
+    return None
+
+
 @safe
 def geocode(address: str) -> dict:
     """Turn an NYC address or place name, or a 'lat,lon' string, into coordinates."""
@@ -215,10 +325,8 @@ def geocode(address: str) -> dict:
     else:
         # GeoSearch is best on street addresses but guesses wildly on place names ("Astoria" finds a
         # power plant), so a name without a house number goes to OpenStreetMap first.
-        if HOUSE_NUMBER.match(address):
-            place = _intersection(address) or _geosearch(address) or _nominatim(address)
-        else:
-            place = _intersection(address) or _nominatim(address) or _geosearch(address)
+        order = (_geosearch, _nominatim) if HOUSE_NUMBER.match(address) else (_nominatim, _geosearch)
+        place = _place(address) or _intersection(address) or _first(address, order)
     if place is None:
         return {"error": f"No match for '{address}'.", "next_step": "Ask the user for a street address with a borough."}
     if not (BOX[0] <= place["lat"] <= BOX[1] and BOX[2] <= place["lon"] <= BOX[3]):
@@ -324,10 +432,30 @@ def _describe(positions: list[int], fastest: list[int]) -> dict:
         "share_of_miles_without_citibike_coverage": round(float(uncovered), 2),
         "lower_confidence": bool(uncovered > 0),
         "corridors": _corridors(positions),
+        "streets": _streets(rows),
         "line": _line(rows),
         "segment_risk": _segment_risk(positions, fastest),
         "turns": _turns(rows),
     }
+
+
+def _streets(rows: pd.DataFrame) -> list[dict]:
+    """Map data: every street on the route in riding order, skipping bits under 0.05 miles."""
+    runs: list[dict] = []
+    for name, borough, miles in zip(rows["name"].fillna("unnamed path"), rows.borough, rows.length_mi):
+        if runs and runs[-1]["name"] == name:
+            runs[-1]["miles"] += miles
+        else:
+            runs.append({"name": name, "borough": borough, "miles": miles})
+    kept: list[dict] = []
+    for run in runs:
+        if run["miles"] < 0.05:
+            continue
+        if kept and kept[-1]["name"] == run["name"]:
+            kept[-1]["miles"] += run["miles"]
+        else:
+            kept.append(dict(run))
+    return [{**r, "miles": round(float(r["miles"]), 2)} for r in kept]
 
 
 def _segment_risk(positions: list[int], fastest: list[int]) -> list[float]:
@@ -445,15 +573,24 @@ def _touches_staten_island(a: int, b: int) -> bool:
 
 
 @safe
-def route_for_lambda(start: str, end: str, lam: float) -> dict:
-    """One route for the page's λ slider. Not an agent tool: it compares nothing, it just redraws."""
+def route_for_lambda(start: str, end: str, lam: float, avoid: list[str] | None = None) -> dict:
+    """One route for the page's λ slider, or one that avoids some segments ("Avoid this stretch"). Not an
+    agent tool: it compares nothing, it just redraws. Risk is still compared with the usual fastest route."""
     from_place, to_place = geocode(start), geocode(end)
     a, b = _nearest_node(from_place), _nearest_node(to_place)
     fastest = _shortest(MINUTES, a, b)
     if not fastest:
         return {"error": "No route.", "next_step": "Pick two connected places."}
-    positions = _shortest(_path_cost(lam, "assumed", _scale("assumed", fastest)), a, b)
-    return _describe(positions, fastest)
+    cost = _path_cost(lam, "assumed", _scale("assumed", fastest)).copy()
+    if avoid:
+        blocked = edges.index.get_indexer(list(avoid))
+        if (blocked < 0).any():
+            raise ValueError("Unknown segment ID.")
+        cost[blocked] = np.inf
+    positions = _shortest(cost, a, b)
+    if not positions or (avoid and set(edges.edge_id.iloc[positions]) & set(avoid)):
+        return {"error": "There's no route around this stretch.", "next_step": "The start or end is on it."}
+    return {**_describe(positions, fastest), "avoided": list(avoid or [])}
 
 
 # --- Evidence tools ---
@@ -676,6 +813,37 @@ def before_after(edge_ids) -> dict:
             "range_note": "The range reflects crash-count noise on the changed streets only, so it is too narrow."}
 
 
+# One plain tip per police-reported main cause. General advice, no odds. First keyword that matches wins.
+TIPS = [
+    ("door", "Ride a door's width away from parked cars."),
+    ("oversized", "Large trucks use this street. Stay out of their blind spots, and don't pass a turning truck on the right."),
+    ("yield", "Drivers here often fail to yield. At crossings, slow down and don't assume a turning car will stop."),
+    ("inattention", "Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop."),
+    ("distraction", "Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop."),
+    ("traffic control", "Drivers here have run lights and signs. Check cross traffic before you go, even on a green."),
+    ("unsafe speed", "Cars here often go too fast. Ride predictably and give yourself extra room at intersections."),
+    ("turning", "Watch for vehicles turning across your path at corners."),
+    ("passing", "Vehicles here pass too closely or use the lane badly. Hold a steady line and take the lane when it's too narrow to share."),
+    ("lane changing", "Vehicles here change lanes unsafely. Hold a steady line and watch for merging cars."),
+    ("following too closely", "Vehicles here follow too closely. Signal early and avoid sudden stops."),
+    ("backing", "Watch for vehicles backing out of driveways and loading zones."),
+    ("view obstructed", "Sight lines are poor here. Slow down where parked vans or trucks block the view."),
+    ("pedestrian/bicyclist", "Reports here often cite rider or pedestrian error. Signal clearly and ride predictably."),
+    ("inexperience", "Reports here often cite driver inexperience. Ride predictably and make yourself easy to see."),
+    ("alcohol", "Some crashes here involved alcohol. Take extra care late at night."),
+    ("aggressive", "Reports here cite aggressive driving. Give drivers room and don't engage."),
+    ("pavement", "The pavement here is a reported factor. Watch the road surface, especially when wet."),
+    ("obstruction", "Debris or obstructions are a reported factor. Watch the road ahead."),
+    ("uninvolved vehicle", "Sudden moves by other vehicles are a reported factor here. Keep space around you and scan ahead."),
+]
+DEFAULT_TIP = "Ride predictably, use lights, and watch for turning vehicles at corners."
+
+
+def watch_out_tip(cause: str | None) -> str:
+    text = (cause or "").lower()
+    return next((tip for key, tip in TIPS if key in text), DEFAULT_TIP)
+
+
 @safe
 def standout_segments(edge_ids, limit: int = 5) -> dict:
     """Segments whose whole crash range (n ± 2 × √n, since 2021) sits above the average for similar
@@ -693,9 +861,72 @@ def standout_segments(edge_ids, limit: int = 5) -> dict:
         spots.append({"number": number, "edge_id": row.edge_id, "street": row.name, "crashes": count_range(row.crashes),
                       "similar_streets_expected": round(float(row.crash_class_rate * row.mile_years), 1),
                       "main_cause": next(iter(_top(causes, 1)), None), **edge_point(row.edge_id),
+                      "tip": watch_out_tip(next(iter(_top(causes, 1)), None)),
                       "collision_ids": here.sort_values("crash_date", ascending=False).collision_id.head(5).tolist()})
     return {"hotspots": spots,
             "finding": None if spots else "No single stretch stands out from similar streets."}
+
+
+# --- Area questions ("Is biking in Queens safe?") ---
+
+AREAS = {"manhattan": "Manhattan", "brooklyn": "Brooklyn", "queens": "Queens", "bronx": "Bronx", "the bronx": "Bronx",
+         "staten island": "Staten Island", "new york city": None, "nyc": None, "citywide": None, "new york": None}
+RIDERS_CAVEAT = ("A lower crash rate per mile can partly reflect fewer people riding there, not only safer streets. "
+                 "Rider counts are thin outside Manhattan, so risk per rider can't be compared between boroughs.")
+AREA_LIMITS = ["Police-reported crashes that hurt a cyclist, since 2021, so this measures serious crash risk, not every incident.",
+               RIDERS_CAVEAT,
+               "These are crashes per mile of street, not anyone's personal odds.",
+               "A corridor that stands out had more crashes than similar streets (same lane type, road type, and borough), "
+               "even allowing for chance."]
+
+
+@safe
+def area_summary(area: str) -> dict:
+    """Borough-level answer for a question about an area with no trip: crashes per mile of street per year
+    against the citywide figure, the share of street miles with protected or painted lanes, and the three
+    corridors that stand out most compared to similar streets. area is a borough or 'New York City'."""
+    key = area.lower().strip().removesuffix(", ny").removesuffix(", new york")
+    if key not in AREAS:
+        raise ValueError(f"'{area}' isn't a borough. Pass Manhattan, Brooklyn, Queens, Bronx, Staten Island, or New York City.")
+    borough = AREAS[key]
+    rows = edges if borough is None else edges[edges.borough == borough]
+    rate = float(rows.crashes.sum() / rows.mile_years.sum())
+    city = float(edges.crashes.sum() / edges.mile_years.sum())
+    lanes = rows.groupby("lane_type").length_mi.sum() / rows.length_mi.sum()
+    named = rows[rows["name"].notna()]
+    # A street name is one corridor per borough: Broadway in Manhattan and Broadway in Queens are different streets
+    streets = named.assign(expected=named.crash_class_rate * named.mile_years).groupby(["name", "borough"]).agg(
+        crashes=("crashes", "sum"), expected=("expected", "sum"), miles=("length_mi", "sum"))
+    streets = streets[streets.crashes - 2 * np.sqrt(streets.crashes) > streets.expected]
+    top = streets.assign(excess=streets.crashes - streets.expected).sort_values("excess", ascending=False).head(3)
+    change = round((rate / city - 1) * 100)
+    return {
+        "area": borough or "New York City",
+        "crashes_per_mile_per_year": round(rate, 2),
+        "citywide_crashes_per_mile_per_year": round(city, 2),
+        "compared_with_citywide": None if borough is None else ("about the same" if change == 0 else f"{abs(change)}% {'higher' if change > 0 else 'lower'}"),
+        "street_miles": round(float(rows.length_mi.sum())),
+        "share_protected_lanes": round(float(lanes.get("protected", 0) + lanes.get("path", 0)), 3),
+        "share_painted_lanes": round(float(lanes.get("painted", 0)), 3),
+        "corridors_that_stand_out": [{"street": name if borough else f"{name}, {home}", "borough": home, "crashes": int(r.crashes),
+                                      "similar_streets_expected": round(float(r.expected), 1), "miles": round(float(r.miles), 1)}
+                                     for (name, home), r in top.iterrows()],
+        "limits": AREA_LIMITS,
+    }
+
+
+def area_text(stats: dict) -> str:
+    """The area answer, written in code so every number is exact."""
+    lines = [f"Biking in {stats['area']}: {stats['crashes_per_mile_per_year']} crashes that hurt a cyclist per mile of "
+             f"street per year since 2021"
+             + (f", {stats['compared_with_citywide']} than the citywide {stats['citywide_crashes_per_mile_per_year']}." if stats["compared_with_citywide"] else ".")]
+    lines.append(f"{stats['share_protected_lanes']:.0%} of its {stats['street_miles']:,} street miles have protected lanes or paths, "
+                 f"and {stats['share_painted_lanes']:.0%} have painted lanes.")
+    lines.append(RIDERS_CAVEAT)
+    if stats["corridors_that_stand_out"]:
+        lines.append("Corridors that stand out compared to similar streets: " + "; ".join(
+            f"{c['street']} ({c['crashes']} crashes against about {c['similar_streets_expected']} expected)" for c in stats["corridors_that_stand_out"]) + ".")
+    return " ".join(lines)
 
 
 # --- SQL ---

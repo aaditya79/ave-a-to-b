@@ -1,5 +1,6 @@
 """Rate limits. No model calls: refused questions never reach the agents."""
 
+import json
 import time
 
 from fastapi.testclient import TestClient
@@ -33,3 +34,104 @@ def test_old_questions_stop_counting():
     reset()
     app.asked["testclient"] = [time.time() - 3700] * 30
     assert app.over_limit(type("R", (), {"headers": {}, "client": type("C", (), {"host": "testclient"})()})()) is None
+
+
+def test_short_route_names():
+    assert app.short_street("West 55th Street", "Manhattan") == "W 55th St"
+    assert app.short_street("West Drive", "Manhattan") == "Central Park"
+    assert app.short_street("West Drive", "Brooklyn") == "Prospect Park"
+    assert app.short_street("Avenue of the Americas", "Manhattan") == "Avenue of the Americas"
+
+
+def test_headline_comes_from_the_numbers():
+    route = lambda ref, extra, risk: {"route_ref": ref, "extra_minutes_vs_fastest": extra, "relative_risk_vs_fastest": {"assumed": risk}}
+    map_ = {"safety_label": "about_equally_safe", "recommended_route": "balanced",
+            "routes": {"fastest": route("a", 0, 1.0), "balanced": route("b", 3.5, 0.38), "lowest_risk": route("c", 6.7, 0.31)}}
+    assert app.headline(map_) == "Take the Balanced route: 3.5 minutes longer each way, about 62% lower crash risk than the fastest route."
+    map_["routes"]["lowest_risk"]["route_ref"] = "a"
+    assert app.headline(map_).startswith("Good news: the fastest route is also the lowest-risk option.")
+
+
+def test_autocomplete_landmarks_work_when_geosearch_is_down(monkeypatch):
+    def down(*args, **kwargs):
+        raise app.tools.httpx.ConnectTimeout("down")
+    monkeypatch.setattr(app.tools.httpx, "get", down)
+    app.tools._suggested.clear()
+    found = client.get("/autocomplete", params={"q": "Union"}).json()
+    assert found[0] == {"label": "Union Square", "detail": "Manhattan", "value": "Union Square, Manhattan"}
+    assert client.get("/autocomplete", params={"q": "u"}).json() == []
+
+
+def test_autocomplete_adds_geosearch_and_stops_at_five(monkeypatch):
+    class Reply:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"features": [{"properties": {"label": f"{n} UNION STREET, Brooklyn, New York, NY, USA"}} for n in range(10)]}
+    monkeypatch.setattr(app.tools.httpx, "get", lambda *args, **kwargs: Reply())
+    app.tools._suggested.clear()
+    found = client.get("/autocomplete", params={"q": "Union"}).json()
+    assert len(found) == 5 and found[0]["label"] == "Union Square"
+    assert found[1] == {"label": "0 Union Street", "detail": "Brooklyn", "value": "0 Union Street, Brooklyn"}
+
+
+def test_route_endpoint_avoids_a_stretch():
+    start, end = "40.8075,-73.9626", "40.7359,-73.9911"
+    plain = client.get("/route", params={"start": start, "end": end, "lam": 1}).json()
+    edge = app.tools.resolve(plain["route_ref"])[40]
+    around = client.get("/route", params={"start": start, "end": end, "lam": 1, "avoid": edge}).json()
+    assert around["avoided"] == [edge] and edge not in app.tools.resolve(around["route_ref"])
+    assert "error" in client.get("/route", params={"start": start, "end": end, "lam": 1, "avoid": "nope"}).json()
+
+
+# --- The free-text question: form fields, memory, and area questions (the Lead is scripted) ---
+
+class ScriptedLead:
+    """Stands in for Runner.run on the Lead: records what it was given and plays back a reply."""
+    def __init__(self, monkeypatch, reply, area=None):
+        self.inputs = []
+
+        async def run(agent, text, context=None, hooks=None, max_turns=None):
+            self.inputs.append(text)
+            if area and hooks is not None:
+                hooks.tool_calls.append({"agent": "Lead", "name": "area_summary", "args": {"area": area},
+                                         "result": str(app.tools.area_summary(area))})  # as TraceHooks.record stores it
+            return type("Result", (), {"final_output": reply(text) if callable(reply) else reply})()
+        monkeypatch.setattr(app.Runner, "run", run)
+
+
+def test_question_uses_the_filled_from_and_to(monkeypatch):
+    lead = ScriptedLead(monkeypatch, "CLARIFY: What time do you ride?\nOPTIONS: Around 8am | Around 6pm")
+    reply = client.post("/chat", json={"message": "Which route is safer?",
+                                        "context": {"start": "Columbia University", "end": "Union Square"}}).json()
+    assert "From: Columbia University" in lead.inputs[0] and "To: Union Square" in lead.inputs[0]
+    assert "don't ask for them again" in lead.inputs[0]
+    assert "both a start and an end are known" in app.lead.instructions.lower()
+    assert "never ask again for something already given" in app.lead.instructions
+    assert reply["clarify"] and reply["session_id"]
+
+
+def test_quick_reply_continues_the_same_task(monkeypatch):
+    lead = ScriptedLead(monkeypatch, "CLARIFY: Where do you start and end, and when do you ride?\nOPTIONS: From Park Slope to DUMBO, around 8am")
+    first = client.post("/chat", json={"message": "Is the bridge bike lane good?", "context": {"when": "around 8am"}}).json()
+    # The page sends the earlier turns back; the server also keeps its own copy for clients that don't
+    for sent in ([{"role": "user", "content": "Is the bridge bike lane good?"}, {"role": "assistant", "content": first["response"]}], None):
+        client.post("/chat", json={"message": "From Park Slope to DUMBO, around 8am", "session_id": first["session_id"],
+                                   "messages": sent, "context": {"when": "around 8am"}})
+        text = lead.inputs[-1]
+        assert "Rider: Is the bridge bike lane good?" in text
+        assert "You asked: Where do you start and end" in text
+        assert "When: around 8am" in text
+        assert text.endswith("Their latest message: From Park Slope to DUMBO, around 8am")
+
+
+def test_area_question_answers_then_offers_a_route(monkeypatch):
+    ScriptedLead(monkeypatch, "CLARIFY: Want me to compare routes for a trip in Queens? Where do you start and end, and when?\n"
+                              "OPTIONS: From Astoria to Long Island City, around 8am | From Jackson Heights to Flushing, around 6pm", area="Queens")
+    reply = client.post("/chat", json={"message": "Is biking in Queens safe?"}).json()
+    assert reply["clarify"] and len(reply["options"]) == 2
+    assert reply["area"]["area"] == "Queens" and len(reply["area"]["corridors_that_stand_out"]) == 3
+    assert reply["response"].startswith("Biking in Queens: 0.36 crashes that hurt a cyclist per mile")
+    assert reply["response"].endswith("Where do you start and end, and when?")
+    assert [c["name"] for c in reply["tool_calls"]] == ["area_summary"]

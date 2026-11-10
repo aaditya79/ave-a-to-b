@@ -12,7 +12,7 @@ It is built for three groups:
 - New Citi Bike and e-bike riders, who don't know the streets yet.
 - Students riding between campus, home, and work.
 
-The page is map first. The left column holds the trip form, a short recommendation, one card per route, and the details. The right column is a map with the three routes, the stretches that stand out, and a slider that redraws the route as you trade minutes for safety. Each route card can open the route in Google Maps, download it as a GPX file, or share it.
+The page is split in half. The left half explains the three steps, then asks for From and To, with suggestions for addresses and common places as you type. You don't type a question; a free-text box is there for questions like "Is biking in Brooklyn safe?". Results start with one bold line, such as "Take the Balanced route: 3.5 minutes longer each way, about 62% lower crash risk than the fastest route." Below it are a card per route, a Faster ↔ Safer slider, the stretches to watch out for, and the before and after results. Each term has a small (i) that explains it in plain words. The right half is a map with each route in its own color and labeled with its name and minutes, risk colors along the selected route, and numbered markers for the stretches to watch. The recommended route's card has buttons to open it in Google Maps or Apple Maps, download it as a GPX file, or share it.
 
 ## 2. Data
 
@@ -78,7 +78,11 @@ Other tables: `crashes.parquet` and `crash_people.parquet` (one row per crash an
 
 Five kinds of agents run on Gemini through LiteLLM and the OpenAI Agents SDK. The Lead, Writer, and Verifier use `gemini-3.5-flash`. The Researchers use `gemini-3.5-flash-lite`.
 
-1. **Lead.** Checks the question first. A question without a start and an end, like "Is biking in Brooklyn safe?", gets one clarifying question with two or three example replies, and the run stops there. Otherwise the Lead calls `route_options`, then sends out Researchers in one turn so they run in parallel.
+1. **Lead.** Checks the question first. It reads the conversation so far and any From, To, and time the rider filled in on the form, and asks only for what is still missing.
+   - A question about an area with no trip, like "Is biking in Brooklyn safe?", gets a short answer from our data through `area_summary`: crashes that hurt a cyclist per mile of street per year against the citywide figure, the share of street miles with protected or painted lanes, the three corridors that stand out most against similar streets, and the limits. Then the Lead asks one clarifying question, offering to compare a specific trip, with two or three example replies to tap. The live trace of that example is in [docs/traces.md](docs/traces.md#is-biking-in-brooklyn-safe).
+   - The area answer never calls one borough safer than another. A lower crash rate per mile can partly reflect fewer people riding there, and rider counts are thin outside Manhattan, so risk per rider can't be compared between boroughs. The answer says so.
+   - A reply to the clarifying question, typed or tapped, goes back with the earlier question, the Lead's question, and the form's fields, so the Lead continues the same task.
+   - Once a start and an end are known, the Lead calls `route_options`, then sends out Researchers in one turn so they run in parallel.
 2. **Researchers**, each in a fresh context with only the tools for its job:
    - Crash Researcher: one per distinct route. Crash counts with ranges, causes, time of day, and segments above the similar-streets average.
    - Infrastructure Researcher: lanes, install dates, Street Improvement Projects, truck routes, blocked lane complaints, and before/after results.
@@ -87,12 +91,23 @@ Five kinds of agents run on Gemini through LiteLLM and the OpenAI Agents SDK. Th
 4. **Writer.** Writes the recommendation, the time versus safety tradeoff, and other useful findings as JSON. Every sentence carries the sources for its numbers: route refs, segment IDs, and collision IDs.
 5. **Verifier.** Code first re-runs every tool call behind each ref and segment the Writer cited. The Verifier model then compares each number with the fresh results and lists any mismatch. If there is one, the Writer fixes the answer once. If the run is past 210 seconds, the answer goes out with the flags listed instead.
 
-The page streams each step: a strip shows Plan, Research, Write, and Check with a timer, and a chip per agent turns green when it finishes. Clicking a chip opens that agent's findings and tool calls. `POST /chat` returns the same pipeline's result as JSON, with every tool call and the agent that made it in `tool_calls`.
+The page streams each step: a strip shows Plan, Research, Write, and Check with a timer, and a chip per agent turns green when it finishes. Clicking a chip opens that agent's findings and tool calls. `POST /chat` returns the same pipeline's result as JSON, with every tool call and the agent that made it in `tool_calls`. It takes Project 1's `{message, session_id}`, plus two optional fields: `messages`, the earlier turns of the conversation, and `context`, the From, To, and time from the form.
+
+### On the page
+
+Three tools on the results page call code, with no agent run:
+
+- **Faster ↔ Safer slider.** The three routes are three points on the slider, with tick marks labeled Fastest, Balanced, and Lowest risk in their route colors. On a tick, the readout names that route and selects it on the map. Between ticks, the page asks `/route` for a route at that setting and shows it as a dashed line, with its minutes and risk compared to the fastest route.
+- **Avoid this stretch.** Each stretch to watch out for has a button that reruns the Balanced routing with that street segment closed (`/route?avoid=`). The new route shows as a dashed line with its minutes and risk compared to the fastest route. If one of the three routes already skips the stretch, the page says so.
+- **Watch-out tips.** Each stretch shows one plain tip chosen in code from its main police-reported crash cause, such as "Drivers here often fail to yield. At crossings, slow down and don't assume a turning car will stop." The tips are general advice, with no odds.
+
+Each route type keeps one color everywhere: blue for Fastest, pink for Balanced, and dark slate for Lowest risk. The recommended route gets a badge and a thicker line. Clicking a card under New lanes and redesigns zooms the map to that project's street segments and highlights them.
 
 ### Exact numbers come from code
 
 The Writer only writes sentences. The numbers a rider compares come from code, using the same tools the agents use:
 
+- the bold first line of the answer, such as "Take the Balanced route: 3.5 minutes longer each way, about 62% lower crash risk than the fastest route." When the fastest route is also the lowest-risk one, it says so instead,
 - the route table (minutes, extra minutes per day, risk compared with the Fastest route),
 - the numbered list of stretches that stand out, which matches the numbered markers on the map,
 - each project's before and after card, with its one-sentence finding,
@@ -112,15 +127,16 @@ All tools are plain Python functions in `tools.py` over the Parquet files, retur
 | `exposure_summary(where)` | Riders per day and the share of miles with Citi Bike coverage |
 | `similar_streets(where)` | Crashes against the expected count for each similar-streets group |
 | `before_after(where)` | One before and after result per project, against comparison streets |
+| `area_summary(area)` | For a borough or the whole city: crashes that hurt a cyclist per mile of street per year against the citywide figure, the share of protected and painted lane miles, the three corridors that stand out most against similar streets, and the limits. Used by the Lead only |
 | `run_sql(query)` | One read-only SELECT over the raw tables, at most 100 rows, with per-rider columns removed |
 
 `where` is a route ref like `route:efad97ec`, a corridor ref, or segment IDs. Refs are hashes of their segments, so a re-run gives the same answer.
 
-Geocoding accepts "lat,lon" as is. Otherwise it tries an intersection in the street network first ("116th St and Broadway"). A street address then goes to NYC Planning's GeoSearch, then OpenStreetMap's Nominatim. A place name goes to Nominatim first, because GeoSearch guesses badly on names: "Astoria" finds a power plant.
+Geocoding accepts "lat,lon" as is. A list of 23 common places (Columbia University, Union Square, Times Square, DUMBO, Prospect Park, Barclays Center, NYU, Grand Central, and others) answers next, with or without a borough: "Union Square, Manhattan" and "Prospect Park, Brooklyn" work on the first try with no network call, and the page's suggestions offer the same list. Otherwise it tries an intersection in the street network ("116th St and Broadway"). A street address then goes to NYC Planning's GeoSearch, then OpenStreetMap's Nominatim. A place name goes to Nominatim first, because GeoSearch guesses badly on names: "Astoria" finds a power plant. If one service times out, the other one answers.
 
 ### Routing
 
-Routing runs Dijkstra's algorithm on the OpenStreetMap bike network (112,867 intersections and 270,248 directed links) with SciPy. Each link costs minutes + λ × risk / scale, where scale is the Fastest route's risk per minute, so a given λ means the same thing on a short trip and a long one. Fastest uses λ = 0, Balanced λ = 1, and Lowest risk λ = 6. The slider on the page runs the same router at any λ from 0 to 10.
+Routing runs Dijkstra's algorithm on the OpenStreetMap bike network (112,867 intersections and 270,248 directed links) with SciPy. Each link costs minutes + λ × risk / scale, where scale is the Fastest route's risk per minute, so a given λ means the same thing on a short trip and a long one. Fastest uses λ = 0, Balanced λ = 1, and Lowest risk λ = 6. The slider on the page runs the same router at any λ from 0 to 12, and "Avoid this stretch" runs it at λ = 1 with one segment closed.
 
 Staten Island has no bike link to the rest of the city in this network. A trip that crosses there gets a note that the Staten Island Ferry carries bikes.
 
@@ -142,7 +158,7 @@ A stretch "stands out compared to similar streets" only when its whole crash ran
 
 For each new lane (named by its street) and each Street Improvement Project finished between 2022 and mid-2025, with at least a year of data on each side, the tool compares crashes per year before and after on the changed segments. It then compares that change with untouched streets of the same road class in the same borough over the same dates, scaled to the same length. The finding states the raw change first, then the comparison, for example: "Crashes fell from 14.2 to 9.4 a year. Similar streets that weren't changed stayed about the same, near 3.7 a year, but a change this size is within normal year-to-year swings. Ridership likely rose too, so the data can't tell whether the lane changed risk per rider." Projects with no crashes on one side, or fewer than 20 in all, are listed as too sparse. The agent never says a lane worked or failed.
 
-## 4. What the data can't answer
+## 4. Limits of the data
 
 - **Every crash.** Police-reported crashes only, so this measures serious crash risk. Many falls and minor crashes are never reported.
 - **Where crashes happened, when coordinates are missing.** 5.7% of crashes have no coordinates (3.5% to 8.0% by year) and are left out of segment counts.
