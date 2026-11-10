@@ -61,6 +61,7 @@ class Research:
     rounds: int = 0
     routes: dict | None = None  # route_options' full result, with the map lines
     findings: list[dict] = field(default_factory=list)
+    unchecked: list[str] = field(default_factory=list)  # tasks a Researcher returned nothing for, even after a retry
 
 
 # --- Tools the agents call. Each returns JSON text; map-only fields stay out of the model's context. ---
@@ -251,18 +252,35 @@ async def send_researcher(run: Research, researcher: str, task: str, refs: list[
                     "round": run.rounds})
     run.hooks.handoff("Lead", agent.name, "brief", prompt, round=run.rounds, researcher=researcher)
     try:
-        result = await Runner.run(agent, prompt, context=run, hooks=run.hooks, max_turns=8)
-        text = str(result.final_output)
-        status = "done"
-    except Exception as e:
-        text = f"This researcher failed ({type(e).__name__}). Treat its task as unanswered."
-        status = "failed"
+        text, status = await run_researcher(agent, prompt, run)
+        if status == "done" and not text.strip():
+            # Nothing came back: send the same brief once more before treating the task as unchecked
+            run.hooks.handoff("Lead", agent.name, "retry", f"No findings came back, so the Lead sent the same brief again.\n{prompt}",
+                              round=run.rounds, researcher=researcher)
+            text, status = await run_researcher(agent, prompt, run)
+        if status == "done" and not text.strip():
+            text, status = "", "empty"
     finally:
         run.active -= 1
+    if status != "done":
+        run.unchecked.append(f"{LABEL_OF[researcher]} (\"{task.strip().rstrip('.')}\")")
+        text = (f"No findings came back from this researcher, even after a retry. Treat its task as unchecked." if status == "empty"
+                else text)
     run.findings.append({"agent": agent.name, "task": task, "refs": refs, "text": text})
     run.hooks.emit({"type": "researcher", "agent": agent.name, "kind": researcher, "status": status, "text": text})
     run.hooks.handoff(agent.name, "Lead", "findings", text, status=status, round=run.rounds, researcher=researcher)
     return text
+
+
+LABEL_OF = {"crash": "crash counts", "infrastructure": "bike lanes and redesigns", "exposure": "rider estimates"}
+
+
+async def run_researcher(agent: Agent, prompt: str, run: Research) -> tuple[str, str]:
+    try:
+        result = await Runner.run(agent, prompt, context=run, hooks=run.hooks, max_turns=8)
+        return str(result.final_output or ""), "done"
+    except Exception as e:
+        return f"This researcher failed ({type(e).__name__}). Treat its task as unanswered.", "failed"
 
 
 @function_tool
@@ -276,7 +294,8 @@ async def research(ctx: RunContextWrapper[Research], researcher: Literal["crash"
             and before/after; 'exposure' for how many people ride there and how sure that is.
         task: What to find out, in one or two sentences. Include the time of day if the user gave one.
         refs: route_ref or corridor_ref values from route_options, or edge IDs.
-        gap: Only for a follow-up round: one sentence naming the gap this researcher fills.
+        gap: Only for a follow-up round: the reason, written as a clause that reads after "because", such as
+            "two Broadway corridors had recent redesigns that Round 1 didn't check". Not a command.
     """
     return await send_researcher(ctx.context, researcher, task, refs, gap)
 
@@ -325,7 +344,8 @@ works, reply with exactly one line and call no tools:
    put a three-hour window around it in each crash task, e.g. "around 8am" -> hours 7 to 10.
 4. Read the findings and look for gaps: a corridor too sparse to judge, a lane or project installed
    since 2021 without a before/after result, or two findings that disagree. For each real gap, send one
-   targeted researcher with the specific corridor_ref or edge IDs, and pass gap: one sentence naming the gap.
+   targeted researcher with the specific corridor_ref or edge IDs, and pass gap: the reason as a clause that reads after "Sent Round 2
+   because", such as "two Broadway corridors had recent redesigns that Round 1 didn't check", never a command.
    At most {MAX_ROUNDS - 1} gap rounds.
 5. When the findings cover the routes, reply DONE and nothing else. A writer writes the answer.""",
     model=MODEL, model_settings=SETTINGS, tools=[route_options, research, area_summary],
@@ -592,7 +612,9 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
                 f"Route names: {json.dumps(names)}\n\nRoute options:\n{route_brief(run.routes)}\n\n"
                 f"Standout stretches (shown to the rider as a numbered list):\n{json.dumps(facts['hotspots_for_writer'])}\n\n"
                 f"Before/after results (shown as cards):\n{json.dumps(facts['before_after_for_writer'])}\n\n"
-                f"Findings:\n\n{findings or 'None came back.'}")
+                f"Findings:\n\n{findings or 'None came back.'}"
+                + (f"\n\nCould not be checked (say so, and don't fill in numbers for these):\n" + "\n".join(f"- {u}" for u in run.unchecked)
+                   if run.unchecked else ""))
     hooks.handoff("Lead", "Writer", "brief", material)
     written = (await Runner.run(writer, material, hooks=hooks)).final_output
 
@@ -627,8 +649,8 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
         hooks.handoff("Writer", "Rider", "fixed", render_sentences(written))
     hooks.activity("Pipeline", f"finished in {time.monotonic() - started:.0f} s")
     map_ = {**map_routes(run.routes), "hotspots": facts["hotspots"], "before_after": facts["before_after"]}
-    return {"response": render_markdown(written, map_, unverified, check is None), "clarify": False,
-            "answer": written.model_dump(), "map": map_, "unverified": unverified,
+    return {"response": render_markdown(written, map_, unverified, check is None, run.unchecked), "clarify": False,
+            "answer": written.model_dump(), "map": map_, "unverified": unverified, "unchecked_parts": run.unchecked,
             "verification": check.model_dump() if check is not None else None}
 
 
@@ -738,7 +760,7 @@ def pct(relative: float) -> str:
     return "same" if change == 0 else f"{abs(change)}% {'lower' if change > 0 else 'higher'}"
 
 
-def render_markdown(written: Answer, map_: dict, unverified: list[str] | None, unchecked: bool) -> str:
+def render_markdown(written: Answer, map_: dict, unverified: list[str] | None, unchecked: bool, parts_unchecked: list[str] = ()) -> str:
     """The full answer for /chat, with every citation in brackets."""
     seen, rows = set(), []
     for name, r in map_["routes"].items():
@@ -776,9 +798,16 @@ def render_markdown(written: Answer, map_: dict, unverified: list[str] | None, u
     parts.append("### Limits\n\n" + "\n".join(f"- {line}" for line in limits(map_)))
     if unverified:
         parts.append("**The number check flagged these points, and there was no time to fix them:**\n" + "\n".join(f"- {p}" for p in unverified))
+    if parts_unchecked:
+        parts.append(unchecked_note(parts_unchecked))
     if unchecked:
         parts.append("_The automatic number check did not finish in time for this answer._")
     return "\n\n".join(parts)
+
+
+def unchecked_note(parts: list[str]) -> str:
+    return ("**Couldn't check:** a researcher returned no findings, even after a retry, so this answer leaves out "
+            + "; ".join(parts) + ".")
 
 
 def limits(map_: dict) -> list[str]:

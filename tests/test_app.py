@@ -347,3 +347,34 @@ def test_casual_phrasing_is_never_blocked():
 
 def test_every_known_attack_is_still_blocked():
     assert [q for q in ATTACKS if not app.guard(q)] == []
+
+
+def test_an_empty_researcher_is_retried_once_then_reported_unchecked(monkeypatch):
+    import asyncio
+    calls = []
+
+    async def fake_run(agent, text, context=None, hooks=None, max_turns=None):
+        calls.append(agent.name)
+        return type("Result", (), {"final_output": "   "})()
+    monkeypatch.setattr(app.Runner, "run", fake_run)
+    hooks = app.TraceHooks(app.AgentContexts(), lambda event: None)
+    run = app.Research(hooks=hooks)
+    text = asyncio.run(app.send_researcher(run, "infrastructure", "Check lanes on Broadway", ["corridor:x"]))
+    assert calls == ["Infrastructure Researcher 1", "Infrastructure Researcher 1"]  # the first try and one retry
+    assert [h["kind"] for h in hooks.handoffs] == ["brief", "retry", "findings"]
+    assert hooks.handoffs[-1]["status"] == "empty" and "unchecked" in text
+    assert run.unchecked == ['bike lanes and redesigns ("Check lanes on Broadway")']
+    note = app.unchecked_note(run.unchecked)
+    assert note.startswith("**Couldn't check:**") and "bike lanes and redesigns" in note
+
+
+def test_a_researcher_that_answers_on_retry_is_not_unchecked(monkeypatch):
+    import asyncio
+    replies = iter(["", "Broadway has 2 lanes since 2021. [corridor:x]"])
+
+    async def fake_run(agent, text, context=None, hooks=None, max_turns=None):
+        return type("Result", (), {"final_output": next(replies)})()
+    monkeypatch.setattr(app.Runner, "run", fake_run)
+    run = app.Research(hooks=app.TraceHooks(app.AgentContexts(), lambda event: None))
+    assert asyncio.run(app.send_researcher(run, "infrastructure", "Check lanes", ["corridor:x"])).startswith("Broadway has 2 lanes")
+    assert run.unchecked == []

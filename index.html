@@ -963,8 +963,12 @@
                 } else if (h.kind === "findings") {
                     const s = state.steps[h.from];
                     const took = s?.at != null ? `took ${secs(h.at_seconds - s.at)}` : "";
-                    const head = el("div", { class: "tl-head", style: "margin-top:10px" }, ...arrow, el("span", { class: "small" }, h.status === "failed" ? "failed" : "findings"), el("span", { class: "when" }, `${secs(h.at_seconds)} · ${took}`));
+                    const head = el("div", { class: "tl-head", style: "margin-top:10px" }, ...arrow, el("span", { class: "small" }, h.status === "failed" ? "failed" : h.status === "empty" ? "no findings" : "findings"), el("span", { class: "when" }, `${secs(h.at_seconds)} · ${took}`));
                     (s?.node || $("trace")).append(head, el("div", { class: "tl-text" }, h.text?.trim() || "No findings came back from this round."));
+                } else if (h.kind === "retry") {
+                    const s = state.steps[h.to];
+                    (s?.node || $("trace")).append(el("div", { class: "tl-head", style: "margin-top:10px" }, who("Lead"), el("span", { class: "arrow" }, "→"), who(h.to),
+                        el("span", { class: "small" }, "retry"), when), el("div", { class: "tl-text" }, h.text.split("\n")[0]));
                 } else if (h.kind === "gap") {
                     step(agentColor("Lead"), [who("Lead"), el("span", { class: "small" }, "gap decision"), when], el("div", { class: "tl-text" }, h.text));
                 } else if (h.kind === "draft") {
@@ -1577,6 +1581,7 @@
                 showSpots(e.map.hotspots);
                 showChanges(e.map.before_after);
                 const notes = [...(e.answer.tradeoff || []), ...(e.answer.notes || [])];
+                for (const part of e.unchecked_parts || []) notes.push({ text: `Couldn't check ${part}: a researcher returned no findings, even after a retry.`, sources: [] });
                 if (e.unverified?.length) notes.push({ text: "An automatic check flagged numbers it could not fix in time. Open the Verifier for details.", sources: [] });
                 showNotes(notes);
                 showLimits();

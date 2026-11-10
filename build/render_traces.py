@@ -21,7 +21,7 @@ The raw responses, with full tool results, are in `docs/traces.json`.
 
 KIND = {"question": "question", "brief": "brief", "findings": "findings", "gap": "gap decision", "draft": "draft to check",
         "problems": "problems to fix", "fixed": "fixed answer", "ok": "check passed", "clarify": "clarifying question",
-        "declined": "declined", "flags": "flags", "unchecked": "check unfinished"}
+        "declined": "declined", "retry": "retry", "flags": "flags", "unchecked": "check unfinished"}
 
 
 def cell(text: str, limit: int) -> str:
