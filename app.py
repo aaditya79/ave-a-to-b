@@ -234,8 +234,10 @@ async def send_researcher(run: Research, researcher: str, task: str, refs: list[
     if run.active == 0:
         run.rounds += 1  # nobody is running: this call opens a new round
         if 1 < run.rounds <= MAX_ROUNDS:
-            run.hooks.handoff("Lead", "Lead", "gap", f"Sent Round {run.rounds} because {gap.strip().rstrip('.') or 'of a gap: ' + task}.",
-                              round=run.rounds)
+            reason = gap.strip().rstrip(".")
+            if reason[:2].istitle() and not reason[:2].isupper():  # "We need ..." reads as "because we need ..."
+                reason = reason[0].lower() + reason[1:]
+            run.hooks.handoff("Lead", "Lead", "gap", f"Sent Round {run.rounds} because {reason or 'of a gap: ' + task}.", round=run.rounds)
     if run.rounds > MAX_ROUNDS:
         return "No research rounds left. Reply DONE."
     if run.researchers >= MAX_RESEARCHERS:

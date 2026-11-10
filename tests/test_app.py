@@ -168,14 +168,14 @@ def test_researchers_log_brief_findings_and_the_gap_decision(monkeypatch):
     hooks = app.TraceHooks(app.AgentContexts(), lambda event: None)
     run = app.Research(hooks=hooks)
     asyncio.run(app.send_researcher(run, "crash", "Count crashes on the route", ["route:abc"]))
-    asyncio.run(app.send_researcher(run, "infrastructure", "Check the 2023 lane", ["corridor:x"], gap="A lane went in during the window"))
+    asyncio.run(app.send_researcher(run, "infrastructure", "Check the 2023 lane", ["corridor:x"], gap="A lane went in during the window."))
     steps = [(h["from"], h["to"], h["kind"]) for h in hooks.handoffs]
     assert steps == [("Lead", "Crash Researcher 1", "brief"), ("Crash Researcher 1", "Lead", "findings"),
                      ("Lead", "Lead", "gap"), ("Lead", "Infrastructure Researcher 2", "brief"),
                      ("Infrastructure Researcher 2", "Lead", "findings")]
     assert hooks.handoffs[0]["text"] == "Task: Count crashes on the route\nRefs: route:abc"
     assert hooks.handoffs[1]["text"].startswith("Crash Researcher 1 found 3 crashes")
-    assert hooks.handoffs[2]["text"] == "Sent Round 2 because A lane went in during the window."
+    assert hooks.handoffs[2]["text"] == "Sent Round 2 because a lane went in during the window."
     assert all(isinstance(h["at_seconds"], float) for h in hooks.handoffs)
 
 

@@ -19,6 +19,11 @@ The raw responses, with full tool results, are in `docs/traces.json`.
 """
 
 
+KIND = {"question": "question", "brief": "brief", "findings": "findings", "gap": "gap decision", "draft": "draft to check",
+        "problems": "problems to fix", "fixed": "fixed answer", "ok": "check passed", "clarify": "clarifying question",
+        "declined": "declined", "flags": "flags", "unchecked": "check unfinished"}
+
+
 def cell(text: str, limit: int) -> str:
     text = " ".join(str(text).split()).replace("|", "\\|")
     return text[:limit]
@@ -39,8 +44,18 @@ def render(run: dict) -> str:
     calls = run["tool_calls"]
     lines = [f"## {run['question']}", "",
              f"{run['seconds']} s on the live site, {len(calls)} tool call{'s' if len(calls) != 1 else ''}.", "", verdict(run), ""]
+    steps = run.get("handoffs") or []
+    gaps = [h for h in steps if h["kind"] == "gap"]
+    if gaps:
+        lines += [f"**Gap round.** {h['text']} ({h['at_seconds']} s)" for h in gaps] + [""]
+    if steps:
+        lines += ["Handoffs, in order:", "", "| at (s) | from → to | what | text (start) |", "|---:|---|---|---|"]
+        for h in steps:
+            text = h["text"] if h["kind"] == "gap" else cell(h["text"], 160)
+            lines.append(f"| {h['at_seconds']} | {h['from']} → {h['to']} | {KIND.get(h['kind'], h['kind'])} | {cell(text, 400)} |")
+        lines.append("")
     if calls:
-        lines += ["| finished at (s) | agent | tool | args | result (start) |", "|---:|---|---|---|---|"]
+        lines += ["Tool calls:", "", "| finished at (s) | agent | tool | args | result (start) |", "|---:|---|---|---|---|"]
         for c in calls:
             args = json.dumps(c["args"]) if not isinstance(c["args"], str) else c["args"]
             lines.append(f"| {c.get('finished_at_seconds', '')} | {c['agent']} | {c['name']} | `{cell(args, 160)}` | {cell(c['result'], 180)} |")
