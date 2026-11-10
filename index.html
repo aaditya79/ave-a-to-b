@@ -135,6 +135,8 @@
             @keyframes pulse { 50% { transform: scale(1.6); opacity: 0.5; } }
             .agents { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
             .agents .round { font-size: 12px; color: var(--faint); font-weight: 600; margin: 0 2px 0 8px; }
+            .agent-chip::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--agent, var(--faint)); margin-right: 6px; vertical-align: 1px; }
+            .agent-chip.done::before, .agent-chip.failed::before { background: #fff; }
             .agent-chip { font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--faint); cursor: pointer; }
             .agent-chip.running { color: var(--blue); border-color: var(--blue); animation: glow 1.4s ease-in-out infinite; }
             .agent-chip.done { color: #fff; background: var(--low); border-color: var(--low); }
@@ -229,6 +231,26 @@
             .call .part > summary { font-size: 13px; }
             .call pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; max-height: 260px; overflow: auto; background: var(--bg); padding: 8px 10px; border-radius: 8px; font-size: 12px; margin: 6px 0 0; }
             .error { color: #b42318; }
+
+            /* --- Handoff timeline: one step per handoff, each agent in its own color --- */
+            .timeline { position: relative; margin-top: 10px; }
+            .tl-step { position: relative; border-left: 3px solid var(--agent, var(--line)); padding: 4px 0 12px 14px; margin-left: 4px; min-width: 0; }
+            .tl-step::before { content: ""; position: absolute; left: -8px; top: 9px; width: 13px; height: 13px; border-radius: 50%; background: var(--agent, var(--line)); border: 2px solid #fff; }
+            .tl-step.flash { animation: flash 1.6s ease-out; }
+            @keyframes flash { from { background: #fff7d6; } to { background: transparent; } }
+            .tl-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 15px; }
+            .tl-head .who { font-weight: 700; }
+            .tl-head .arrow { color: var(--faint); }
+            .tl-head .when { margin-left: auto; font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+            .tl-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--faint); margin: 8px 0 2px; }
+            .tl-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; background: var(--bg); padding: 8px 10px; border-radius: 8px; max-height: 280px; overflow: auto; }
+            .tl-calls { list-style: none; margin: 4px 0 0; padding: 0; }
+            .tl-calls > li { border-top: 1px solid var(--line); padding: 5px 0; font-size: 14px; min-width: 0; }
+            .tl-calls > li > details > summary { overflow-wrap: anywhere; }
+            .tl-calls .tool { font-family: ui-monospace, Menlo, monospace; font-size: 13px; font-weight: 600; }
+            .tl-calls .gist { color: var(--muted); margin-left: 14px; }
+            .tl-calls pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; background: var(--bg); padding: 8px 10px; border-radius: 8px; font-size: 12px; margin: 6px 0 0; }
+            .tl-problems { margin: 4px 0 0; padding-left: 20px; font-size: 14px; }
 
             /* --- Drawer for agent findings and sources --- */
             .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(480px, 100%); background: #fff; box-shadow: -8px 0 24px rgba(11, 31, 58, 0.14); z-index: 1500; transform: translateX(100%); transition: transform 0.2s ease; display: flex; flex-direction: column; }
@@ -378,8 +400,8 @@
 
                 <section class="card hidden" id="traceCard">
                     <details>
-                        <summary>Show trace: every tool call by agent (<span id="callCount">0</span>)</summary>
-                        <div id="trace"></div>
+                        <summary>Show how the agents worked: every handoff and tool call (<span id="callCount">0</span> calls)</summary>
+                        <div id="trace" class="timeline"></div>
                     </details>
                 </section>
             </div>
@@ -478,7 +500,7 @@
             // --- State for one question ---
             let state = null;
             function fresh() {
-                return { session: null, map: null, colors: {}, layers: {}, sources: [], calls: [], agents: {}, groups: {}, startedAt: Date.now(), selected: null, trip: null, messages: [], context: null, asked: null };
+                return { session: null, map: null, colors: {}, layers: {}, sources: [], calls: [], agents: {}, groups: {}, startedAt: Date.now(), selected: null, trip: null, messages: [], context: null, asked: null, steps: {}, handoffs: [] };
             }
 
             // --- Map ---
@@ -743,7 +765,7 @@
                     const writer = $("agents").querySelector('[data-group="Writer"]');
                     writer ? $("agents").insertBefore(mark, writer) : $("agents").append(mark);
                 }
-                const node = el("button", { class: "agent-chip", onclick: () => showGroup(key) }, label);
+                const node = el("button", { class: "agent-chip", style: `--agent:${agentColor(key)}`, onclick: () => showInTimeline(key) }, label);
                 node.dataset.group = key;
                 const writer = $("agents").querySelector('[data-group="Writer"]');
                 if (writer && !["Writer", "Verifier"].includes(key)) $("agents").insertBefore(node, writer);
@@ -770,20 +792,6 @@
                 const overall = statuses.includes("running") ? "running" : statuses.includes("failed") ? "failed" : statuses.every((s) => s === "done") ? "done" : "";
                 g.node.className = "agent-chip " + overall;
             }
-            function showGroup(key) {
-                const g = state.groups[key];
-                const parts = [];
-                for (const name of g.members) {
-                    const a = state.agents[name];
-                    const calls = state.calls.filter((c) => c.agent === name);
-                    if (g.members.length > 1) parts.push(el("h4", {}, a.label));
-                    if (a.task) parts.push(el("p", { class: "small" }, el("b", {}, "Task: "), a.task));
-                    parts.push(el("div", { class: "text" }, a.text || (a.status === "running" ? "Still working…" : "No findings yet.")));
-                    if (calls.length) parts.push(el("details", { class: "call" }, el("summary", {}, `Tool calls (${calls.length})`), calls.map(renderCall)));
-                }
-                openDrawer(g.members.length > 1 ? `${g.label} researchers (${g.members.length})` : g.label, parts);
-            }
-
             // --- Trace: "Agent · tool", with arguments and result in their own scrolling blocks ---
             const pretty = (value) => {
                 try { return JSON.stringify(typeof value === "string" ? JSON.parse(value) : value, null, 2); } catch (e) { return String(value); }
@@ -794,10 +802,107 @@
                     el("details", { class: "part" }, el("summary", {}, "Arguments"), el("pre", {}, pretty(c.args))),
                     el("details", { class: "part" }, el("summary", {}, "Result"), el("pre", {}, pretty(c.result))));
             }
+            // --- Handoff timeline: Lead → Researcher briefs, each agent's tool calls, findings, the gap decision,
+            // the Writer's input, and the Verifier's problems and fixes, in the order they happened ---
+            const AGENT_COLORS = [["Lead", "#0b1f3a"], ["Crash", "#c2410c"], ["Infrastructure", "#15803d"], ["Exposure", "#7c3aed"],
+                ["Writer", "#b45309"], ["Verifier", "#4338ca"], ["Pipeline", "#6b7280"], ["Rider", "#6b7280"]];
+            const agentColor = (name) => (AGENT_COLORS.find(([k]) => String(name).startsWith(k)) || [, "#6b7280"])[1];
+            const who = (name) => el("span", { class: "who", style: `color:${agentColor(name)}` }, name === "Pipeline" ? "Code" : name);
+            const secs = (t) => (t == null ? "" : `${Number(t).toFixed(1)} s`);
+            // A short readable version of a tool result; the full JSON stays one click away
+            function gist(result) {
+                let value;
+                try { value = typeof result === "string" ? JSON.parse(result) : result; } catch (e) { return String(result).replace(/\s+/g, " ").slice(0, 140); }
+                if (value?.error) return "error: " + value.error;
+                if (!value || typeof value !== "object") return String(value).slice(0, 140);
+                const parts = [];
+                for (const [k, v] of Object.entries(value)) {
+                    if (v == null || k.startsWith("_")) continue;
+                    if (typeof v !== "object") parts.push(`${k.replace(/_/g, " ")} ${v}`);
+                    else if (Array.isArray(v)) parts.push(`${k.replace(/_/g, " ")}: ${v.length}`);
+                    else if ("n" in v) parts.push(`${k.replace(/_/g, " ")} ${v.n}`);
+                    if (parts.length === 4) break;
+                }
+                return parts.join(" · ") || "(see full result)";
+            }
+            function stepCall(c) {
+                const args = typeof c.args === "string" ? c.args : Object.entries(c.args || {}).map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(", ");
+                return el("li", {}, el("details", {},
+                    el("summary", {}, el("span", { class: "tool" }, c.name), el("span", { class: "small" }, ` ${args.slice(0, 70)}${args.length > 70 ? "…" : ""}`),
+                        el("div", { class: "gist" }, `→ ${c.gist || gist(c.result)}`, c.finished_at_seconds != null ? el("span", { class: "small" }, ` · at ${secs(c.finished_at_seconds)}`) : null)),
+                    el("div", { class: "tl-label" }, "Arguments"), el("pre", {}, pretty(c.args)),
+                    el("div", { class: "tl-label" }, c.truncated ? "Result (first 4,000 characters; the full one is in /chat's tool_calls)" : "Full result"), el("pre", {}, pretty(c.result))));
+            }
+            function step(color, head, ...body) {
+                const node = el("div", { class: "tl-step", style: `--agent:${color}` }, el("div", { class: "tl-head" }, ...head), ...body);
+                $("trace").append(node);
+                return node;
+            }
+            const textBlock = (label, text, collapsed = false) => collapsed
+                ? el("details", {}, el("summary", { class: "small" }, label), el("div", { class: "tl-text" }, text))
+                : [el("div", { class: "tl-label" }, label), el("div", { class: "tl-text" }, text)];
+            // Each agent's step gets its tool calls as they finish
+            function stepFor(agent) {
+                if (state.steps[agent]) return state.steps[agent];
+                const calls = el("ul", { class: "tl-calls" });
+                const node = step(agentColor(agent), [who(agent), el("span", { class: "small" }, agent === "Pipeline" ? "stretches and before/after, computed in code" : "tool calls")], el("div", { class: "tl-label" }, "Tool calls"), calls);
+                return (state.steps[agent] = { node, calls });
+            }
+            function onHandoff(h) {
+                state.handoffs.push(h);
+                const when = el("span", { class: "when" }, secs(h.at_seconds));
+                const arrow = [who(h.from), el("span", { class: "arrow" }, "→"), who(h.to)];
+                if (h.kind === "question") {
+                    const calls = el("ul", { class: "tl-calls" });
+                    const node = step(agentColor("Lead"), [...arrow, when], ...textBlock("Question", h.text), el("div", { class: "tl-label" }, "Lead's tool calls"), calls);
+                    state.steps.Lead = { node, calls };
+                } else if (h.kind === "brief") {
+                    if (h.to === "Writer") {
+                        state.steps.Writer = { node: step(agentColor("Writer"), [...arrow, when], el("div", { class: "small" }, "Everything the Writer saw: the question, the headline, the routes, the stretches and before/after results from code, and every finding."), textBlock("What the Writer received", h.text, true)) };
+                        return;
+                    }
+                    const calls = el("ul", { class: "tl-calls" });
+                    const node = step(agentColor(h.to), [...arrow, h.round > 1 ? el("span", { class: "small" }, `Round ${h.round}`) : null, when],
+                        ...textBlock("Brief", h.text), el("div", { class: "tl-label" }, `${h.to}'s tool calls`), calls);
+                    state.steps[h.to] = { node, calls, at: h.at_seconds };
+                    node.dataset.agent = h.to;
+                } else if (h.kind === "findings") {
+                    const s = state.steps[h.from];
+                    const took = s?.at != null ? `took ${secs(h.at_seconds - s.at)}` : "";
+                    const head = el("div", { class: "tl-head", style: "margin-top:10px" }, ...arrow, el("span", { class: "small" }, h.status === "failed" ? "failed" : "findings"), el("span", { class: "when" }, `${secs(h.at_seconds)} · ${took}`));
+                    (s?.node || $("trace")).append(head, el("div", { class: "tl-text" }, h.text));
+                } else if (h.kind === "gap") {
+                    step(agentColor("Lead"), [who("Lead"), el("span", { class: "small" }, "gap decision"), when], el("div", { class: "tl-text" }, h.text));
+                } else if (h.kind === "draft") {
+                    const calls = el("ul", { class: "tl-calls" });
+                    const node = step(agentColor("Verifier"), [...arrow, when], textBlock("The Writer's draft", h.text, true),
+                        el("div", { class: "tl-label" }, "Verifier's re-run of the cited tools (code)"), calls);
+                    state.steps.Verifier = { node, calls };
+                } else if (h.kind === "problems") {
+                    step(agentColor("Verifier"), [...arrow, el("span", { class: "small" }, "sends fixes back"), when], el("div", { class: "tl-label" }, "Problems found"),
+                        el("ul", { class: "tl-problems" }, h.text.split("\n").filter(Boolean).map((p) => el("li", {}, p.replace(/^- /, "")))));
+                } else if (h.kind === "fixed") {
+                    step(agentColor("Writer"), [...arrow, el("span", { class: "small" }, "fixed answer"), when], textBlock("Corrected answer", h.text, true));
+                } else {
+                    // ok, flags, unchecked, clarify: the last step before the rider sees the answer
+                    step(agentColor(h.from), [...arrow, when], el("div", { class: "tl-text" }, h.text));
+                }
+            }
             function addCall(c) {
                 state.calls.push(c);
                 $("callCount").textContent = state.calls.length;
-                $("trace").append(renderCall(c));
+                if (c.agent === "Lead" && c.name === "research") return; // shown as the brief and the findings
+                stepFor(c.agent).calls?.append(stepCall(c));
+            }
+            // A chip opens the timeline at that agent's first step
+            function showInTimeline(key) {
+                const g = state.groups[key];
+                $("traceCard").querySelector("details").open = true;
+                const name = g?.members[0] || key;
+                const node = name === "Lead" ? state.steps.Lead?.node : [...$("trace").children].find((n) => n.dataset.agent === name) || state.steps[name]?.node;
+                if (!node) return;
+                node.scrollIntoView({ behavior: "smooth", block: "start" });
+                node.classList.remove("flash"); void node.offsetWidth; node.classList.add("flash");
             }
 
             // --- Route cards ---
@@ -1190,6 +1295,7 @@
                     }
                 } else if (e.type === "activity") onActivity(e);
                 else if (e.type === "tool") addCall(e);
+                else if (e.type === "handoff") onHandoff(e);
                 else if (e.type === "done") onDone(e);
                 else if (e.type === "error") fail(e.message);
             }
@@ -1217,9 +1323,6 @@
                 if (state.agents.Lead) state.agents.Lead.text = e.clarify ? `Asked: ${e.response}` : "Found the routes, sent the researchers, and checked for gaps.";
                 if (e.clarify) {
                     state.messages = [...state.messages, { role: "user", content: state.asked }, { role: "assistant", content: e.response }];
-                    // The clarification is a step in the trace, next to any tool the Lead called
-                    $("trace").append(el("details", { class: "call", open: true }, el("summary", {}, el("b", {}, "Lead"), " · clarifying question"),
-                        el("pre", {}, e.response.split("\n\n").pop() + (e.options?.length ? "\n\nQuick replies: " + e.options.join(" | ") : ""))));
                     return showClarify(e.response, e.options || [], e.area);
                 }
                 if (e.answer) {

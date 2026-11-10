@@ -155,3 +155,40 @@ def test_area_question_with_an_unrelated_trip_filled_answers_the_area(monkeypatc
     assert reply["response"].endswith("I can also compare routes for your trip from Columbia University to Union Square.")
     assert reply["options"][0] == "From Columbia University to Union Square, around 8am"
     assert "message decides the task, not the form" in app.lead.instructions
+
+
+# --- The handoff timeline ---
+
+def test_researchers_log_brief_findings_and_the_gap_decision(monkeypatch):
+    import asyncio
+
+    async def fake_run(agent, text, context=None, hooks=None, max_turns=None):
+        return type("Result", (), {"final_output": f"{agent.name} found 3 crashes. [route:abc]"})()
+    monkeypatch.setattr(app.Runner, "run", fake_run)
+    hooks = app.TraceHooks(app.AgentContexts(), lambda event: None)
+    run = app.Research(hooks=hooks)
+    asyncio.run(app.send_researcher(run, "crash", "Count crashes on the route", ["route:abc"]))
+    asyncio.run(app.send_researcher(run, "infrastructure", "Check the 2023 lane", ["corridor:x"], gap="A lane went in during the window"))
+    steps = [(h["from"], h["to"], h["kind"]) for h in hooks.handoffs]
+    assert steps == [("Lead", "Crash Researcher 1", "brief"), ("Crash Researcher 1", "Lead", "findings"),
+                     ("Lead", "Lead", "gap"), ("Lead", "Infrastructure Researcher 2", "brief"),
+                     ("Infrastructure Researcher 2", "Lead", "findings")]
+    assert hooks.handoffs[0]["text"] == "Task: Count crashes on the route\nRefs: route:abc"
+    assert hooks.handoffs[1]["text"].startswith("Crash Researcher 1 found 3 crashes")
+    assert hooks.handoffs[2]["text"] == "Sent Round 2 because A lane went in during the window."
+    assert all(isinstance(h["at_seconds"], float) for h in hooks.handoffs)
+
+
+def test_chat_returns_the_handoffs(monkeypatch):
+    ScriptedLead(monkeypatch, "CLARIFY: Where do you start and end?\nOPTIONS: From Park Slope to DUMBO, around 8am")
+    reply = client.post("/chat", json={"message": "Is the bridge good?"}).json()
+    assert [(h["from"], h["to"]) for h in reply["handoffs"]] == [("Rider", "Lead"), ("Lead", "Rider")]
+    assert reply["handoffs"][0]["text"] == "Is the bridge good?"
+
+
+def test_tool_results_get_a_short_readable_line():
+    result = json.dumps({"edge_count": 17, "miles": 2.98, "filters": {"hour_from": 7}, "crashes_matching_filters": {"n": 4, "low": 0.0},
+                         "hotspots": [1, 2], "lower_confidence": False})
+    assert app.gist(result) == "edge count 17 · miles 2.98 · crashes matching filters 4 · hotspots: 2"
+    assert app.gist('{"error": "No route", "next_step": "x"}') == "error: No route"
+    assert app.gist("plain findings text") == "plain findings text"

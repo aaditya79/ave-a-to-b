@@ -228,21 +228,13 @@ You estimate how many people bike the routes or corridors you're given, and how 
 }
 
 
-@function_tool
-async def research(ctx: RunContextWrapper[Research], researcher: Literal["crash", "infrastructure", "exposure"],
-                   task: str, refs: list[str]) -> str:
-    """Send one researcher, in a fresh context, to study some routes or corridors. Call several at once
-    to run them in parallel. Returns its findings with citations.
-
-    Args:
-        researcher: 'crash' for crash counts, hotspots and causes; 'infrastructure' for lanes, redesigns
-            and before/after; 'exposure' for how many people ride there and how sure that is.
-        task: What to find out, in one or two sentences. Include the time of day if the user gave one.
-        refs: route_ref or corridor_ref values from route_options, or edge IDs.
-    """
-    run = ctx.context
+async def send_researcher(run: Research, researcher: str, task: str, refs: list[str], gap: str = "") -> str:
+    """One Researcher in a fresh context. Each step is logged as a handoff for the page's timeline."""
     if run.active == 0:
         run.rounds += 1  # nobody is running: this call opens a new round
+        if 1 < run.rounds <= MAX_ROUNDS:
+            run.hooks.handoff("Lead", "Lead", "gap", f"Sent Round {run.rounds} because {gap.strip().rstrip('.') or 'of a gap: ' + task}.",
+                              round=run.rounds)
     if run.rounds > MAX_ROUNDS:
         return "No research rounds left. Reply DONE."
     if run.researchers >= MAX_RESEARCHERS:
@@ -250,10 +242,11 @@ async def research(ctx: RunContextWrapper[Research], researcher: Literal["crash"
     run.researchers += 1
     run.active += 1
     agent = RESEARCHERS[researcher].clone(name=f"{RESEARCHERS[researcher].name} {run.researchers}")
+    prompt = f"Task: {task}\nRefs: {', '.join(refs)}"
     run.hooks.emit({"type": "researcher", "agent": agent.name, "kind": researcher, "status": "running", "task": task,
                     "round": run.rounds})
+    run.hooks.handoff("Lead", agent.name, "brief", prompt, round=run.rounds, researcher=researcher)
     try:
-        prompt = f"Task: {task}\nRefs: {', '.join(refs)}"
         result = await Runner.run(agent, prompt, context=run, hooks=run.hooks, max_turns=8)
         text = str(result.final_output)
         status = "done"
@@ -264,7 +257,24 @@ async def research(ctx: RunContextWrapper[Research], researcher: Literal["crash"
         run.active -= 1
     run.findings.append({"agent": agent.name, "task": task, "refs": refs, "text": text})
     run.hooks.emit({"type": "researcher", "agent": agent.name, "kind": researcher, "status": status, "text": text})
+    run.hooks.handoff(agent.name, "Lead", "findings", text, status=status, round=run.rounds, researcher=researcher)
     return text
+
+
+@function_tool
+async def research(ctx: RunContextWrapper[Research], researcher: Literal["crash", "infrastructure", "exposure"],
+                   task: str, refs: list[str], gap: str = "") -> str:
+    """Send one researcher, in a fresh context, to study some routes or corridors. Call several at once
+    to run them in parallel. Returns its findings with citations.
+
+    Args:
+        researcher: 'crash' for crash counts, hotspots and causes; 'infrastructure' for lanes, redesigns
+            and before/after; 'exposure' for how many people ride there and how sure that is.
+        task: What to find out, in one or two sentences. Include the time of day if the user gave one.
+        refs: route_ref or corridor_ref values from route_options, or edge IDs.
+        gap: Only for a follow-up round: one sentence naming the gap this researcher fills.
+    """
+    return await send_researcher(ctx.context, researcher, task, refs, gap)
 
 
 # --- The Lead: checks the question, gets routes, fans out, and fills gaps ---
@@ -304,7 +314,8 @@ You lead a team that compares bike commute routes in New York City for safety.
    put a three-hour window around it in each crash task, e.g. "around 8am" -> hours 7 to 10.
 4. Read the findings and look for gaps: a corridor too sparse to judge, a lane or project installed
    since 2021 without a before/after result, or two findings that disagree. For each real gap, send one
-   targeted researcher with the specific corridor_ref or edge IDs. At most {MAX_ROUNDS - 1} gap rounds.
+   targeted researcher with the specific corridor_ref or edge IDs, and pass gap: one sentence naming the gap.
+   At most {MAX_ROUNDS - 1} gap rounds.
 5. When the findings cover the routes, reply DONE and nothing else. A writer writes the answer.""",
     model=MODEL, model_settings=SETTINGS, tools=[route_options, research, area_summary],
 )
@@ -415,19 +426,53 @@ def recheck(draft: str, hooks: "TraceHooks") -> str:
 # --- The pipeline ---
 
 
+def gist(result) -> str:
+    """A short readable line for a tool result in the timeline, from the full result."""
+    try:
+        value = json.loads(result) if isinstance(result, str) else result
+    except ValueError:
+        return " ".join(str(result).split())[:140]
+    if not isinstance(value, dict):
+        return " ".join(str(value).split())[:140]
+    if value.get("error"):
+        return f"error: {value['error']}"
+    parts = []
+    for key, v in value.items():
+        name = key.replace("_", " ")
+        if v is None or isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float, str)) and len(str(v)) < 60:
+            parts.append(f"{name} {v}")
+        elif isinstance(v, list):
+            parts.append(f"{name}: {len(v)}")
+        elif isinstance(v, dict) and "n" in v:
+            parts.append(f"{name} {v['n']}")
+        if len(parts) == 4:
+            break
+    return " · ".join(parts) or "(see the full result)"
+
+
 class TraceHooks(PanelHooks):
     """PanelHooks, plus every tool call with the agent that made it, for /chat's tool_calls."""
 
     def __init__(self, contexts: AgentContexts, emit):
         super().__init__(contexts, emit)
         self.tool_calls: list[dict] = []
+        self.handoffs: list[dict] = []
         self.started = time.monotonic()
 
+    def handoff(self, sender: str, receiver: str, kind: str, text: str, **extra) -> None:
+        """One step of the flow for the timeline: who handed what to whom, and when."""
+        step = {"from": sender, "to": receiver, "kind": kind, "text": str(text),
+                "at_seconds": round(time.monotonic() - self.started, 1), **extra}
+        self.handoffs.append(step)
+        self.emit({"type": "handoff", **step})
+
     def record(self, agent: str, name: str, args, result) -> None:
-        call = {"agent": agent, "name": name, "args": args, "result": str(result),
+        call = {"agent": agent, "name": name, "args": args, "result": str(result), "gist": gist(result),
                 "finished_at_seconds": round(time.monotonic() - self.started, 1)}
         self.tool_calls.append(call)
-        self.emit({"type": "tool", **call, "result": call["result"][:2000]})
+        self.emit({"type": "tool", **call, "result": call["result"][:4000], "truncated": len(call["result"]) > 4000})
 
     async def on_tool_end(self, context, agent, tool, result):
         args = getattr(context, "tool_arguments", None)
@@ -455,6 +500,7 @@ def parse_clarify(text: str) -> dict:
 async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -> dict:
     run = Research(hooks=hooks)
     started = time.monotonic()
+    hooks.handoff("Rider", "Lead", "question", question)
 
     # 1. Research: check the question, get routes, fan out, and fill gaps
     try:
@@ -476,6 +522,7 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
                 asked.update(area=area, response=f"{tools.area_text(area)}\n\n{offer}")
             else:
                 asked.update(area=area, response=f"{tools.area_text(area)}\n\nI can also compare routes for a specific trip. {asked['response']}")
+        hooks.handoff("Lead", "Rider", "clarify", asked["response"] + ("\n\nQuick replies: " + " | ".join(asked["options"]) if asked["options"] else ""))
         return asked
     if run.routes is None:
         # No route: the tool's note (or the Lead's reply) is all there is to explain
@@ -496,6 +543,7 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
                 f"Standout stretches (shown to the rider as a numbered list):\n{json.dumps(facts['hotspots_for_writer'])}\n\n"
                 f"Before/after results (shown as cards):\n{json.dumps(facts['before_after_for_writer'])}\n\n"
                 f"Findings:\n\n{findings or 'None came back.'}")
+    hooks.handoff("Lead", "Writer", "brief", material)
     written = (await Runner.run(writer, material, hooks=hooks)).final_output
 
     # 4. Verify, then fix once
@@ -503,6 +551,7 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
     try:
         hooks.activity("Verifier", "started")
         draft = render_sentences(written)
+        hooks.handoff("Writer", "Verifier", "draft", draft)
         fresh = recheck(draft, hooks)
         prompt = f"Route options:\n{route_brief(run.routes)}\n\nDraft:\n{draft}\n\nFresh tool results:\n\n{fresh}"
         verified = await asyncio.wait_for(Runner.run(verifier, prompt, hooks=hooks, max_turns=2), VERIFY_SECONDS)
@@ -511,13 +560,21 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
         hooks.activity("Verifier", f"could not finish: {type(e).__name__}")
     late = time.monotonic() - started > FIX_DEADLINE_SECONDS
     unverified = None
+    if check is None:
+        hooks.handoff("Verifier", "Rider", "unchecked", "The check did not finish in time, so the answer went out unchecked.")
+    elif check.ok or not check.problems:
+        hooks.handoff("Verifier", "Rider", "ok", "Every cited number matched a fresh run of the tools.")
     if check is not None and not check.ok and check.problems and late:
         unverified = check.problems  # no time for a rewrite: show the flags rather than hide them
+        hooks.handoff("Verifier", "Rider", "flags", "Out of time for a rewrite, so these flags go out with the answer:\n"
+                      + "\n".join(f"- {p}" for p in check.problems))
     elif check is not None and not check.ok and check.problems:
         problems = "\n".join(f"- {p}" for p in check.problems)
+        hooks.handoff("Verifier", "Writer", "problems", problems)
         fix = (f"{material}\n\nYour answer:\n{written.model_dump_json()}\n\nA verifier re-ran the tools and found "
                f"these problems. Fix them and return the full corrected answer:\n{problems}")
         written = (await Runner.run(writer, fix, hooks=hooks)).final_output
+        hooks.handoff("Writer", "Rider", "fixed", render_sentences(written))
     hooks.activity("Pipeline", f"finished in {time.monotonic() - started:.0f} s")
     map_ = {**map_routes(run.routes), "hotspots": facts["hotspots"], "before_after": facts["before_after"]}
     return {"response": render_markdown(written, map_, unverified, check is None), "clarify": False,
@@ -798,7 +855,8 @@ async def chat(request: ChatRequest, http: Request):
         result = {"response": f"Something went wrong on our side ({type(e).__name__}: {str(e)[:300]}). Please try again."}
     return {"response": result["response"], "session_id": session_id, "tool_calls": hooks.tool_calls,
             "answer": result.get("answer"), "clarify": result.get("clarify", False), "options": result.get("options", []),
-            "map": result.get("map"), "area": result.get("area"), "verification": result.get("verification")}
+            "map": result.get("map"), "area": result.get("area"), "verification": result.get("verification"),
+            "handoffs": hooks.handoffs}
 
 
 @app.get("/run")
