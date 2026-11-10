@@ -296,6 +296,12 @@ def test_followup_caps_and_length(monkeypatch):
 
 def test_a_new_trip_comes_back_as_a_rerun(monkeypatch):
     reset()
-    followup_setup(monkeypatch, "RERUN: From Astoria to DUMBO, around 6pm")
+    followup_setup(monkeypatch, "RERUN: From Astoria to DUMBO, around 6pm.")
     reply = ask_followup("What about from Astoria to DUMBO instead?", session_id="s-rerun")
     assert reply["rerun"] == "From Astoria to DUMBO, around 6pm" and "compare it from scratch" in reply["response"]
+
+
+def test_rerun_without_a_time_has_no_stray_comma(monkeypatch):
+    reset()
+    followup_setup(monkeypatch, "RERUN: From Astoria to DUMBO, ")
+    assert ask_followup("Astoria to DUMBO?", session_id="s-rerun2")["rerun"] == "From Astoria to DUMBO"

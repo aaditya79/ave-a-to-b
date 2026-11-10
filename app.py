@@ -1067,7 +1067,7 @@ async def followup(request: FollowupRequest, http: Request):
         return {**reply, "followups_left": MAX_FOLLOWUPS - asked,
                 "response": f"Something went wrong on our side ({type(e).__name__}). Please try again."}
     if said.startswith("RERUN:"):
-        reply["rerun"] = said.removeprefix("RERUN:").strip()
+        reply["rerun"] = said.removeprefix("RERUN:").strip().rstrip(",. ")
         said = f"That's a different trip, so I'll compare it from scratch: {reply['rerun']}."
     elif said.startswith("OFF_TOPIC:"):
         reply["declined"] = True
