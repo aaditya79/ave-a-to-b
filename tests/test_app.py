@@ -305,3 +305,21 @@ def test_rerun_without_a_time_has_no_stray_comma(monkeypatch):
     reset()
     followup_setup(monkeypatch, "RERUN: From Astoria to DUMBO, ")
     assert ask_followup("Astoria to DUMBO?", session_id="s-rerun2")["rerun"] == "From Astoria to DUMBO"
+
+
+# --- Citywide explore mode ---
+
+def test_explore_layers_are_small_and_complete():
+    reply = client.get("/explore", headers={"Accept-Encoding": "gzip"})
+    assert reply.status_code == 200 and reply.headers["content-encoding"] == "gzip"
+    assert int(reply.headers["content-length"]) < 600_000  # what the page downloads
+    layers = reply.json()
+    assert set(layers) == {"lanes", "trucks", "projects", "corridors"}
+    assert layers["lanes"]["protected"] and layers["lanes"]["painted"] and layers["trucks"] and layers["projects"]
+    first = layers["corridors"][0]
+    assert first["range_low"] > first["similar_streets_expected"] and first["lines"]
+    lat, lon = first["lines"][0][0]
+    assert 40.4 < lat < 41 and -74.3 < lon < -73.6
+    named = {(c["street"], c["borough"]) for c in layers["corridors"]}
+    queens = app.tools.area_summary("Queens")["corridors_that_stand_out"]
+    assert all((c["street"], "Queens") in named for c in queens)  # the same test as the area answers

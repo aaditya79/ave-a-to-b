@@ -284,6 +284,15 @@
             /* The basemap a step quieter, so the routes stand out */
             .leaflet-gl-layer { filter: saturate(0.45) contrast(0.9) brightness(1.04); }
             .legend { position: absolute; bottom: 20px; right: 16px; z-index: 500; background: #fff; border-radius: 12px; box-shadow: var(--shadow); padding: 12px 14px; font-size: 14px; max-width: min(300px, calc(100% - 32px)); }
+            .explore { position: absolute; top: 12px; left: 12px; z-index: 600; background: #fff; border-radius: 12px; box-shadow: var(--shadow); padding: 8px 12px; font-size: 14px; max-width: min(290px, calc(100% - 80px)); }
+            .explore > summary { list-style: none; cursor: pointer; }
+            .explore > summary::-webkit-details-marker { display: none; }
+            .explore .switch { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--navy); cursor: pointer; }
+            .explore-body { margin-top: 6px; }
+            .explore-body label { display: flex; align-items: center; gap: 8px; margin: 5px 0; cursor: pointer; font-size: 13px; }
+            .explore-body i { display: inline-block; width: 20px; height: 4px; border-radius: 2px; flex: none; }
+            .explore-body i.truck { height: 0; border-top: 3px dotted #8b5e34; border-radius: 0; }
+            .explore-body p { margin: 6px 0 0; }
             .legend > summary { font-weight: 700; color: var(--navy); font-size: 14px; }
             .legend h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 10px 0 6px; font-weight: 600; }
             .legend .item { display: flex; align-items: center; gap: 8px; margin: 4px 0; line-height: 1.3; }
@@ -429,6 +438,17 @@
 
             <div class="mapwrap">
                 <div id="map"></div>
+                <details class="explore" id="explore">
+                    <summary><label class="switch" onclick="event.stopPropagation()"><input type="checkbox" id="exploreOn" /> Explore the city</label></summary>
+                    <div class="explore-body">
+                        <label><input type="checkbox" data-layer="corridors" checked /><i style="background: #c81e1e"></i>Corridors that stand out</label>
+                        <label><input type="checkbox" data-layer="protected" checked /><i style="background: #15803d"></i>Protected lanes and paths</label>
+                        <label><input type="checkbox" data-layer="painted" checked /><i style="background: #84cc16"></i>Painted lanes</label>
+                        <label><input type="checkbox" data-layer="projects" /><i style="background: #f5b700"></i>Street Improvement Projects</label>
+                        <label><input type="checkbox" data-layer="trucks" /><i class="truck"></i>Truck routes</label>
+                        <p class="small" id="exploreNote">Click a red corridor for its numbers. These 60 corridors have the most crashes that hurt a cyclist since 2021 above similar streets, beyond chance.</p>
+                    </div>
+                </details>
                 <details class="legend hidden" id="legend" open>
                     <summary>Map key</summary>
                     <h3>Routes</h3>
@@ -544,6 +564,42 @@
                     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
                 }).addTo(map);
             }
+            // --- Citywide explore mode: precomputed layers, drawn on a canvas so thousands of lines stay fast ---
+            const exploreCanvas = L.canvas({ padding: 0.3 });
+            const exploreLayers = { corridors: L.layerGroup(), protected: L.layerGroup(), painted: L.layerGroup(), projects: L.layerGroup(), trucks: L.layerGroup() };
+            let exploreData = null;
+            async function loadExplore() {
+                if (exploreData) return exploreData;
+                $("exploreNote").textContent = "Loading the city's layers…";
+                exploreData = await (await fetch("/explore")).json();
+                const line = (pts, style, group) => L.polyline(pts, { renderer: exploreCanvas, interactive: false, ...style }).addTo(group);
+                for (const pts of exploreData.lanes.protected) line(pts, { color: "#15803d", weight: 2.5, opacity: 0.8 }, exploreLayers.protected);
+                for (const pts of exploreData.lanes.painted) line(pts, { color: "#84cc16", weight: 2.5, opacity: 0.85 }, exploreLayers.painted);
+                for (const pts of exploreData.trucks) line(pts, { color: "#8b5e34", weight: 1.5, opacity: 0.6, dashArray: "2 4" }, exploreLayers.trucks);
+                for (const p of exploreData.projects) {
+                    const popup = `<b>${escapeHtml(p.name)}</b><br>Street Improvement Project${p.year ? `, ${p.year}` : ""}`;
+                    for (const pts of p.lines) L.polyline(pts, { renderer: exploreCanvas, color: "#f5b700", weight: 4, opacity: 0.75 }).bindPopup(popup).addTo(exploreLayers.projects);
+                }
+                for (const c of exploreData.corridors) {
+                    const popup = `<b>${escapeHtml(c.street)}, ${escapeHtml(c.borough)}</b><br>${c.crashes} crashes that hurt a cyclist since 2021 (range ${c.range_low} to ${c.range_high}), `
+                        + `against about ${c.similar_streets_expected} on similar streets.<br>${c.severe} left a cyclist seriously hurt or killed. ${c.miles} miles of street.`;
+                    for (const pts of c.lines) L.polyline(pts, { renderer: exploreCanvas, color: "#c81e1e", weight: 3.5, opacity: 0.8 }).bindPopup(popup).addTo(exploreLayers.corridors);
+                }
+                $("exploreNote").textContent = "Click a red corridor for its numbers. These 60 corridors have the most crashes that hurt a cyclist since 2021 above similar streets, beyond chance.";
+                return exploreData;
+            }
+            async function setExplore(on) {
+                $("exploreOn").checked = on;
+                $("explore").open = on;
+                if (on) await loadExplore();
+                for (const box of document.querySelectorAll("#explore [data-layer]")) {
+                    const layer = exploreLayers[box.dataset.layer];
+                    on && box.checked ? layer.addTo(map) : layer.remove();
+                }
+            }
+            $("exploreOn").addEventListener("change", () => setExplore($("exploreOn").checked));
+            for (const box of document.querySelectorAll("#explore [data-layer]")) box.addEventListener("change", () => setExplore($("exploreOn").checked));
+
             const routeLayer = L.layerGroup().addTo(map);
             const projectLayer = L.layerGroup().addTo(map);
             const sliderLayer = L.layerGroup().addTo(map);
@@ -1333,6 +1389,7 @@
             }
 
             function showRoutes(data) {
+                if ($("exploreOn").checked) setExplore(false); // a trip takes the map; the switch brings the city back
                 state.map = data;
                 state.colors = assignColors(data);
                 const recommended = distinctRoutes(data).find((r) => r.keys.includes(data.recommended_route)) || distinctRoutes(data)[0];
@@ -1604,6 +1661,8 @@
                 $("askBox").classList.remove("hidden");
                 askFree();
             } else if (query.get("from") && query.get("to")) runTrip({ start: query.get("from"), end: query.get("to"), when: query.get("when") || "" });
+            // Explore mode is on before any trip; on a phone its layer list starts folded so the map shows
+            else setExplore(true).then(() => matchMedia("(max-width: 960px)").matches && ($("explore").open = false));
         </script>
     </body>
 </html>

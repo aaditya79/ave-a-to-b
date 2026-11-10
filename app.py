@@ -7,6 +7,7 @@ answers, and a Verifier re-runs the tools behind every number before the answer 
 """
 
 import asyncio
+import gzip
 import json
 import os
 import re
@@ -21,7 +22,7 @@ from agents import Agent, ModelSettings, RunContextWrapper, Runner, function_too
 from agents.extensions.models.litellm_model import LitellmModel
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 import tools
@@ -1076,6 +1077,21 @@ async def followup(request: FollowupRequest, http: Request):
     reply["tool_calls"] = [{"agent": "Follow-up", "name": "results_from_code", "args": {"session_id": session_id},
                             "result": json.dumps(facts, default=str)}]
     return {**reply, "response": said, "followups_left": MAX_FOLLOWUPS - asked - 1}
+
+
+_explore: dict = {}
+
+
+@app.get("/explore")
+def explore(http: Request):
+    """The citywide layers for the map's explore mode, built by build/b10_explore.py, gzipped once."""
+    if "body" not in _explore:
+        raw = (HERE / "data" / "explore.json").read_bytes()
+        _explore.update(body=raw, gzipped=gzip.compress(raw, 6))
+    headers = {"Cache-Control": "public, max-age=3600", "Vary": "Accept-Encoding"}
+    if "gzip" in http.headers.get("accept-encoding", ""):
+        return Response(_explore["gzipped"], media_type="application/json", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(_explore["body"], media_type="application/json", headers=headers)
 
 
 @app.get("/autocomplete")
