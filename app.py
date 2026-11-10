@@ -11,12 +11,16 @@ import gzip
 import json
 import logging
 import os
+import random
 import re
 import time
 import uuid
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+
+import litellm
 
 import uvicorn
 from agents import Agent, ModelSettings, RunContextWrapper, Runner, function_tool, set_tracing_disabled
@@ -32,6 +36,7 @@ import tools
 log = logging.getLogger("ave")
 # Shown instead of any exception: the traceback goes to the server log, never to the page
 FRIENDLY_ERROR = "Something went wrong on our side while comparing routes. Please try again."
+BUSY_MESSAGE = "The AI service is busy right now. Please try again in a minute, or try a saved example."
 from context_panel import AgentContexts, PanelHooks, add_context_panel
 
 load_dotenv(Path(__file__).parent / ".env")
@@ -39,16 +44,74 @@ load_dotenv(Path(__file__).parent / ".env")
 # Traces upload to OpenAI by default, which needs an OpenAI key. We're on Gemini.
 set_tracing_disabled(True)
 
+# --- Model calls: at most MAX_MODEL_CALLS at once on an instance, across every agent and trip, and a busy reply
+# (429 RESOURCE_EXHAUSTED) waits and tries again, about 2, 4, 8, then 16 seconds, with jitter, instead of
+# LiteLLM's fast retries. Researchers still start together; their calls just queue for a slot. ---
+MAX_MODEL_CALLS = 3
+MAX_TRIES = 5  # for a busy reply; other passing errors (500, 503, a dropped connection) get 3
+BACKOFF_SECONDS = 2
+_slots: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+
+
+def model_slots() -> asyncio.Semaphore:
+    """The shared limit, one per event loop (the server has one; tests make several)."""
+    loop = asyncio.get_running_loop()
+    if loop not in _slots:
+        _slots[loop] = asyncio.Semaphore(MAX_MODEL_CALLS)
+    return _slots[loop]
+
+
+def rate_limited(error: BaseException | None) -> bool:
+    """A 429 from the model service, anywhere in the exception's chain."""
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if (isinstance(error, litellm.RateLimitError) or getattr(error, "status_code", None) == 429
+                or "RESOURCE_EXHAUSTED" in str(error)):
+            return True
+        error = error.__cause__ or error.__context__
+    return False
+
+
+def passing(error: BaseException) -> bool:
+    return isinstance(error, (litellm.ServiceUnavailableError, litellm.InternalServerError, litellm.APIConnectionError))
+
+
+class ThrottledModel(LitellmModel):
+    """LitellmModel with the shared limit and backoff. A slot is held only while a call is in flight."""
+
+    async def get_response(self, *args, **kwargs):
+        for attempt in range(1, MAX_TRIES + 1):
+            try:
+                async with model_slots():
+                    return await super().get_response(*args, **kwargs)
+            except Exception as e:
+                busy = rate_limited(e)
+                if not (busy or passing(e)) or attempt >= (MAX_TRIES if busy else 3):
+                    raise
+                wait = BACKOFF_SECONDS * 2 ** (attempt - 1) * random.uniform(0.75, 1.25)
+                log.warning("%s: %s on try %d, waiting %.1f s", self.model, "429" if busy else type(e).__name__, attempt, wait)
+                await asyncio.sleep(wait)
+
+    async def stream_response(self, *args, **kwargs):
+        async with model_slots():
+            async for event in super().stream_response(*args, **kwargs):
+                yield event
+
+
 # With GEMINI_API_KEY set, LiteLLM calls the Gemini API with it. Otherwise it calls Vertex AI with
-# your gcloud credentials, which is what Cloud Run uses.
+# your gcloud credentials, which is what Cloud Run uses, on the global endpoint. num_retries is 0 because
+# ThrottledModel does the retrying.
 if os.getenv("GEMINI_API_KEY"):
-    MODEL = LitellmModel(model="gemini/gemini-3.5-flash", api_key=os.environ["GEMINI_API_KEY"])
-    RESEARCHER_MODEL = LitellmModel(model="gemini/gemini-3.5-flash-lite", api_key=os.environ["GEMINI_API_KEY"])
-    SETTINGS = ModelSettings(extra_args={"timeout": 90, "num_retries": 3})
+    MODEL = ThrottledModel(model="gemini/gemini-3.5-flash", api_key=os.environ["GEMINI_API_KEY"])
+    RESEARCHER_MODEL = ThrottledModel(model="gemini/gemini-3.5-flash-lite", api_key=os.environ["GEMINI_API_KEY"])
+    SETTINGS = ModelSettings(extra_args={"timeout": 90, "num_retries": 0})
 else:
-    MODEL = LitellmModel(model="vertex_ai/gemini-3.5-flash", api_key="unused")
-    RESEARCHER_MODEL = LitellmModel(model="vertex_ai/gemini-3.5-flash-lite", api_key="unused")
-    SETTINGS = ModelSettings(extra_args={"vertex_location": "global", "timeout": 90, "num_retries": 3})
+    MODEL = ThrottledModel(model="vertex_ai/gemini-3.5-flash", api_key="unused")
+    RESEARCHER_MODEL = ThrottledModel(model="vertex_ai/gemini-3.5-flash-lite", api_key="unused")
+    SETTINGS = ModelSettings(extra_args={"vertex_location": "global", "timeout": 90, "num_retries": 0})
+# A Researcher still told "busy" after every try gets one more go on the other model, which has its own quota
+RESEARCHER_FALLBACK = MODEL
 
 # Low reasoning effort for every agent but the Writer: thinking tokens were most of the cost of a trip
 LOW_SETTINGS = SETTINGS.resolve(ModelSettings(extra_args={**SETTINGS.extra_args, "reasoning_effort": "low"}))
@@ -58,6 +121,12 @@ MAX_ROUNDS = 3  # the first fan-out plus two gap rounds
 RESEARCH_SECONDS = 120  # then the Writer works with what came back
 VERIFY_SECONDS = 60
 FIX_DEADLINE_SECONDS = 210  # graders wait 5 minutes: past this, skip the rewrite
+TOTAL_SECONDS = 270  # the whole answer, retries and waits for a busy model included, inside those 5 minutes
+
+
+def time_left(started: float, floor: float = 20) -> float:
+    """Seconds left in the answer's budget, with a small floor so a late step still gets one try."""
+    return max(floor, TOTAL_SECONDS - (time.monotonic() - started))
 
 
 @dataclass
@@ -308,6 +377,12 @@ async def run_researcher(agent: Agent, prompt: str, run: Research) -> tuple[str,
         result = await Runner.run(agent, prompt, context=run, hooks=run.hooks, max_turns=8)
         return str(result.final_output or ""), "done"
     except Exception as e:
+        if rate_limited(e) and agent.model is not RESEARCHER_FALLBACK:
+            name = RESEARCHER_FALLBACK.model.split("/")[-1]
+            run.hooks.activity(agent.name, f"model busy (429) after {MAX_TRIES} tries: switched once to {name}")
+            run.hooks.handoff("Lead", agent.name, "retry", f"The model was busy (429) after {MAX_TRIES} tries, so the Lead sent "
+                              f"the same brief once more on {name}.\n{prompt}", round=run.rounds)
+            return await run_researcher(agent.clone(model=RESEARCHER_FALLBACK), prompt, run)
         return f"This researcher failed ({type(e).__name__}). Treat its task as unanswered.", "failed"
 
 
@@ -592,6 +667,8 @@ def declined(text: str) -> dict:
 
 def guard(message: str) -> dict | None:
     """A refusal for messages that are too long or try to change the rules; None lets the message through."""
+    if not message.strip():
+        return declined(f"Please type a question first. For example: \"{SUGGESTIONS[0]}\".")
     if len(message) > MAX_MESSAGE_CHARS:
         return declined(f"Please keep questions under {MAX_MESSAGE_CHARS} characters. For example: \"{SUGGESTIONS[0]}\".")
     if INJECTION.search(message):
@@ -664,7 +741,7 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
         # No route: the tool's note (or the Lead's reply) is all there is to explain
         notes = [c["result"] for c in hooks.tool_calls if c["name"] == "route_options"]
         prompt = f"Question: {question}\n\nRoute search result:\n{notes[-1] if notes else lead_said}"
-        written = (await Runner.run(writer, prompt, hooks=hooks)).final_output
+        written = (await asyncio.wait_for(Runner.run(writer, prompt, hooks=hooks), time_left(started))).final_output
         return {"response": " ".join(x.text for x in written.summary), "clarify": False, "answer": written.model_dump(), "map": None}
 
     # 2. The exact parts come from code: standout stretches and per-project before/after, across all routes
@@ -684,7 +761,7 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
                 + (f"\n\nCould not be checked (say so, and don't fill in numbers for these):\n" + "\n".join(f"- {u}" for u in run.unchecked)
                    if run.unchecked else ""))
     hooks.handoff("Lead", "Writer", "brief", material)
-    written = (await Runner.run(writer, material, hooks=hooks)).final_output
+    written = (await asyncio.wait_for(Runner.run(writer, material, hooks=hooks), time_left(started))).final_output
 
     # 4. Verify, then fix once
     check = None
@@ -694,7 +771,7 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
         hooks.handoff("Writer", "Verifier", "draft", draft)
         fresh = recheck(draft, hooks)
         prompt = f"Route options:\n{route_brief(run.routes)}\n\nDraft:\n{draft}\n\nFresh tool results:\n\n{fresh}"
-        verified = await asyncio.wait_for(Runner.run(verifier, prompt, hooks=hooks, max_turns=2), VERIFY_SECONDS)
+        verified = await asyncio.wait_for(Runner.run(verifier, prompt, hooks=hooks, max_turns=2), min(VERIFY_SECONDS, time_left(started)))
         check = verified.final_output
     except Exception as e:  # out of time or a bad reply: say the check didn't finish, don't block the answer
         hooks.activity("Verifier", f"could not finish: {type(e).__name__}")
@@ -717,8 +794,12 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
         hooks.handoff("Verifier", "Writer", "problems", problems)
         fix = (f"{material}\n\nYour answer:\n{written.model_dump_json()}\n\nA verifier re-ran the tools and found "
                f"these problems. Fix them and return the full corrected answer:\n{problems}")
-        written = (await Runner.run(writer, fix, hooks=hooks)).final_output
-        hooks.handoff("Writer", "Rider", "fixed", render_sentences(written))
+        try:
+            written = (await asyncio.wait_for(Runner.run(writer, fix, hooks=hooks), time_left(started))).final_output
+            hooks.handoff("Writer", "Rider", "fixed", render_sentences(written))
+        except asyncio.TimeoutError:  # out of time for the rewrite: the first draft goes out with the flags shown
+            unverified = check.problems
+            hooks.handoff("Verifier", "Rider", "flags", "Out of time for a rewrite, so these flags go out with the answer:\n" + problems)
     hooks.activity("Pipeline", f"finished in {time.monotonic() - started:.0f} s")
     map_ = {**map_routes(run.routes), "hotspots": facts["hotspots"], "before_after": facts["before_after"]}
     return {"response": render_markdown(written, map_, unverified, check is None, run.unchecked), "clarify": False,
@@ -1125,7 +1206,8 @@ def favicon():
 async def chat(request: ChatRequest, http: Request):
     key = cache_key(request.message, request.messages, request.context)
     hit = cached(key)
-    if refusal := over_limit(http, new=hit is None):
+    # A message the guardrail declines costs no model call, so it counts only toward the hourly limit
+    if refusal := over_limit(http, new=hit is None and guard(request.message) is None):
         return JSONResponse({"response": refusal, "session_id": request.session_id, "tool_calls": [], "map": None,
                              "verification": None}, status_code=429)
     session_id = request.session_id or str(uuid.uuid4())
@@ -1141,16 +1223,16 @@ async def chat(request: ChatRequest, http: Request):
             store(key, {**result, "tool_calls": hooks.tool_calls, "handoffs": hooks.handoffs, "usage": hooks.usage}, [])
         remember(session_id, history, request.message, result["response"])
         keep_results(session_id, result, request.context)
-    except Exception:
+    except Exception as e:
         # Auth, quota, a model that won't stop, a bug: the full traceback goes to the log, a plain message to the page
         log.exception("/chat failed for %r", request.message[:200])
-        result = {"response": FRIENDLY_ERROR, "error": True}
+        result = {"response": BUSY_MESSAGE if rate_limited(e) else FRIENDLY_ERROR, "error": True, "busy": rate_limited(e)}
     return {"response": result["response"], "session_id": session_id, "tool_calls": hooks.tool_calls,
             "answer": result.get("answer"), "clarify": result.get("clarify", False), "options": result.get("options", []),
             "map": result.get("map"), "area": result.get("area"), "distance": result.get("distance"), "declined": result.get("declined", False),
             "unchecked_parts": result.get("unchecked_parts", []), "verification": result.get("verification"),
             "cached_at": result.get("cached_at"), "usage": result.get("usage", hooks.usage),
-            "handoffs": hooks.handoffs, "error": result.get("error", False)}
+            "handoffs": hooks.handoffs, "error": result.get("error", False), "busy": result.get("busy", False)}
 
 
 @app.get("/run")
@@ -1163,7 +1245,7 @@ async def run(message: str, http: Request, session_id: str | None = None, messag
         sent, trip = None, None
     key = cache_key(message, sent, trip)
     hit = cached(key)
-    if refusal := over_limit(http, new=hit is None):
+    if refusal := over_limit(http, new=hit is None and guard(message) is None):  # as in /chat
         async def refused():
             yield f"data: {json.dumps({'type': 'error', 'message': refusal, 'limit': refusal == DAILY_MESSAGE})}\n\n"
         return StreamingResponse(refused(), media_type="text/event-stream")
@@ -1193,9 +1275,10 @@ async def run(message: str, http: Request, session_id: str | None = None, messag
             remember(session_id, history, message, result["response"])
             keep_results(session_id, result, trip)
             queue.put_nowait({"type": "done", **result, "usage": hooks.usage})
-        except Exception:
+        except Exception as e:
             log.exception("/run failed for %r", message[:200])
-            queue.put_nowait({"type": "error", "message": FRIENDLY_ERROR, "retry": True})
+            busy = rate_limited(e)
+            queue.put_nowait({"type": "error", "message": BUSY_MESSAGE if busy else FRIENDLY_ERROR, "retry": True, "busy": busy})
 
     task = asyncio.create_task(work())
 
@@ -1330,10 +1413,10 @@ async def followup(request: FollowupRequest, http: Request):
     prompt = f"RESULTS:\n{json.dumps(facts, default=str)}\n\nEarlier follow-ups:\n{earlier}\n\nThe rider's follow-up: {request.message}"
     try:
         said = str((await asyncio.wait_for(Runner.run(followup_agent, prompt, max_turns=1), 60)).final_output).strip()
-    except Exception:
+    except Exception as e:
         log.exception("/followup failed")
         return {**reply, "followups_left": MAX_FOLLOWUPS - asked,
-                "response": "Something went wrong on our side while answering. Please try again."}
+                "response": BUSY_MESSAGE if rate_limited(e) else "Something went wrong on our side while answering. Please try again."}
     if said.startswith("RERUN:"):
         reply["rerun"] = said.removeprefix("RERUN:").strip().rstrip(",. ")
         said = f"That's a different trip, so I'll compare it from scratch: {reply['rerun']}."
@@ -1402,6 +1485,13 @@ def explore(http: Request):
 def autocomplete(q: str = ""):
     """At most 5 suggestions for the From and To boxes: built-in places, then NYC GeoSearch."""
     return tools.suggest(q[:100])
+
+
+@app.get("/reverse")
+def reverse(lat: float, lon: float):
+    """For "Pick on map": a readable address for a point, the coordinates if the lookup fails, or an error
+    for a spot outside NYC or in the water."""
+    return tools.pick_point(round(lat, 6), round(lon, 6))
 
 
 @app.get("/route")

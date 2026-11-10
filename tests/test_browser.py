@@ -220,6 +220,12 @@ def test_history_keeps_a_finished_trip_and_reopens_it_without_a_model_call(page,
     assert len(saved) == 1 and saved[0]["trip"]["start"] == "Prospect Heights, Brooklyn"
     assert saved[0]["rec"]["miles"] > 0 and len(saved[0]["rec"]["line"]) > 5 and saved[0]["result"]["map"]["routes"]
     calls = count_model_requests(page)
+    assert "from=" in page.url
+    page.route("**/run?*", lambda r: r.abort())  # in case it did ask: never reach a model from a test
+    page.reload()  # the URL still names the trip: a reload reopens it from History instead of asking the model again
+    page.wait_for_selector("#summary .support")
+    assert page.text_content("#savedTag") == "From your History" and "from=" in page.url
+    page.unroute("**/run?*")
     page.goto(base_url)
     page.click("#navHistory")
     page.wait_for_selector(".hist-item")
@@ -280,3 +286,119 @@ def test_example_chips_never_call_the_model(page, base_url):
         page.wait_for_selector("#savedBanner:not(.hidden)")
         page.wait_for_selector("#summary .support")
     assert calls == []
+
+
+@pytest.mark.parametrize("width", [1440, 1100, 390])
+def test_stat_strip_numbers_stay_level(page, base_url, width):
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(base_url)
+    page.wait_for_function("document.getElementById('statCrashes').textContent !== '…'")
+    boxes = page.evaluate("""[...document.querySelectorAll('#statStrip > div')].map(d => ({
+        number: Math.round(d.querySelector('b').getBoundingClientRect().top),
+        label: Math.round(d.querySelector('span').getBoundingClientRect().top),
+        lines: Math.round(d.querySelector('span').getBoundingClientRect().height / 17) }))""")
+    assert len({b["number"] for b in boxes}) == 1 and len({b["label"] for b in boxes}) == 1
+    assert page.inner_text("#statStrip span") == "cyclist injury crashes since 2021"
+    if width == 1440:
+        assert all(b["lines"] == 1 for b in boxes)  # every label on one line at desktop width
+    page.set_viewport_size({"width": 1280, "height": 800})
+
+
+def test_an_error_after_routes_were_drawn_leaves_no_partial_results(page, base_url):
+    import json as _json
+    from pathlib import Path as _Path
+    import app as _app
+    ex = _json.loads((_Path(__file__).resolve().parent.parent / "data" / "saved_examples.json").read_text())["columbia-union-sq"]
+    routes = next(e for e in ex["events"] if e["type"] == "routes")
+    body = "".join(f"data: {_json.dumps(e)}\n\n" for e in [{"type": "start", "session_id": "b"}, routes,
+                   {"type": "error", "message": _app.BUSY_MESSAGE, "retry": True, "busy": True}])
+    page.goto(base_url)
+    page.route("**/run?*", lambda r: r.fulfill(status=200, headers={"Content-Type": "text/event-stream"}, body=body))
+    page.fill("#start", "Columbia University")
+    page.fill("#end", "Union Square")
+    page.click("#go")
+    page.wait_for_selector("#errorBox:not(.hidden)")
+    page.unroute("**/run?*")
+    assert page.inner_text("#errorBox p") == _app.BUSY_MESSAGE
+    assert page.locator("#retryRun").count() == 1 and page.locator("#errorBox .limit-help .chip").count() == 3
+    assert page.locator("#routeCards > *").count() == 0
+    assert page.evaluate("routeLayer.getLayers().length + labelLayer.getLayers().length + spotLayer.getLayers().length") == 0
+    for hidden in ["tiles", "summary", "sliderBox", "progress", "traceCard", "legend"]:
+        assert page.locator(f"#{hidden}").is_hidden(), hidden
+
+
+def click_map_at(page, lat, lon):
+    point = page.evaluate(f"(() => {{ const p = map.latLngToContainerPoint([{lat}, {lon}]); const b = map.getContainer().getBoundingClientRect(); return [b.left + p.x, b.top + p.y]; }})()")
+    page.mouse.click(*point)
+
+
+def test_two_map_clicks_fill_from_and_to_and_drag_updates(page, base_url):
+    reverse = {"n": 0}
+
+    def fake_reverse(route):
+        from urllib.parse import urlparse, parse_qs
+        q = parse_qs(urlparse(route.request.url).query)
+        lat, lon = float(q["lat"][0]), float(q["lon"][0])
+        reverse["n"] += 1
+        if lon < -74.03:  # New Jersey
+            return route.fulfill(json={"error": "That spot is outside NYC, so it can't be routed.", "outside": True})
+        route.fulfill(json={"value": f"Spot {reverse['n']}, Manhattan", "lat": lat, "lon": lon, "address": True})
+    calls = count_model_requests(page)
+    page.goto(base_url)
+    page.route("**/reverse?*", fake_reverse)
+    page.evaluate("map.setView([40.75, -73.99], 13, { animate: false })")
+    page.click("#pickStart")
+    assert page.inner_text("#pickHint") == "Click the map to set your start"
+    click_map_at(page, 40.7484, -73.9857)
+    page.wait_for_function("document.getElementById('start').value === 'Spot 1, Manhattan'")
+    assert page.inner_text("#pickHint") == "Click the map to set your destination"  # switched to To by itself
+    click_map_at(page, 40.7359, -73.9911)
+    page.wait_for_function("document.getElementById('end').value === 'Spot 2, Manhattan'")
+    assert page.locator("#pickHint").is_hidden() and page.evaluate("!!pins.start && !!pins.end && !picking")
+    # Outside NYC: an error, and no pin moves
+    page.click("#pickEnd")
+    click_map_at(page, 40.7440, -74.0400)
+    page.wait_for_function("document.getElementById('pickHint').classList.contains('bad')")
+    assert page.inner_text("#pickHint") == "That spot is outside NYC, so it can't be routed."
+    assert page.input_value("#end") == "Spot 2, Manhattan"
+    page.keyboard.press("Escape")  # cancels pick mode
+    assert page.evaluate("picking") is None and page.locator("#pickHint").is_hidden()
+    # Dragging a pin updates its input
+    page.evaluate("pins.start.setLatLng([40.7527, -73.9772]); pins.start.fire('dragend')")
+    page.wait_for_function("document.getElementById('start').value.startsWith('Spot 4')")
+    page.unroute("**/reverse?*")
+    assert calls == []
+
+
+def test_moving_a_pin_after_results_clears_them_and_waits(page, base_url):
+    calls = count_model_requests(page)
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector("#summary .support")
+    assert page.evaluate("!!pins.start && !!pins.end")  # the route's ends are draggable pins
+    page.route("**/reverse?*", lambda r: r.fulfill(json={"value": "Moved, Manhattan", "lat": 40.8, "lon": -73.96, "address": True}))
+    page.evaluate("pins.end.setLatLng([40.8, -73.96]); pins.end.fire('dragend')")
+    page.wait_for_function("document.getElementById('end').value === 'Moved, Manhattan'")
+    page.unroute("**/reverse?*")
+    assert page.locator("#routeCards > *").count() == 0 and page.locator("#summary").is_hidden()
+    assert page.locator("#progress").is_hidden() and calls == []  # nothing runs until Compare routes
+    page.fill("#end", "Union Square")  # typing a different place removes the stale pin
+    assert page.evaluate("pins.end") is None
+
+
+def test_a_reset_right_after_results_draw_throws_nothing(page, base_url):
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector("#summary .support")
+    page.errors.clear()
+    page.evaluate("onEvent({ type: 'routes', data: state.map }); reset()")  # the map fit is still pending when the page resets
+    page.wait_for_timeout(600)
+    assert page.errors == []
+
+
+def test_info_buttons_have_a_24_px_tap_area(page, base_url):
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector("#routeCards .info")
+    page.locator("#routeCards .info").first.scroll_into_view_if_needed()
+    size = page.evaluate("""(() => { const b = document.querySelector('#routeCards .info').getBoundingClientRect();
+        const x = b.left + b.width / 2, y = b.top + b.height / 2, hit = (dx, dy) => document.elementFromPoint(x + dx, y + dy)?.closest('.info');
+        return [b.width, hit(11, 0) && hit(-11, 0) && hit(0, 11) && hit(0, -11) ? 1 : 0]; })()""")
+    assert size == [18, 1]  # looks 18 px wide, takes taps 11 px from its center

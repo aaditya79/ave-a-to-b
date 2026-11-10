@@ -7,6 +7,12 @@ before/after results, which the page and the answer show exactly as computed. `V
 the tool calls behind every ref and edge ID the Writer cited, before the Verifier model compares them.
 The raw responses, with full tool results, are in `docs/traces.json`.
 
+These runs were recorded before ranges for fewer than 10 crashes switched from n ± 2 × √n to the exact range
+(`tools.range_bounds`). The ranges code builds (the route table, the stretches, and the before and after
+results) were recomputed with today's method by `build/refresh_ranges.py`, with no model calls. The Researchers'
+findings and the recorded tool results are left as they ran, so a small count there can show the older range:
+7 crashes as 1.7 to 12.3 where the app now shows 2.8 to 14.4.
+
 ## I bike from Astoria, Queens to Times Square. Which route should I take?
 
 68.9 s on the live site, 61 tool calls.
@@ -128,7 +134,7 @@ Taking this route adds 3.4 minutes to your daily round trip. [route:3d2d166b; ro
 ### Stretches that stand out
 
 1. Central Park South: 10 crashes since 2021 (range 3.7 to 16.3), against about 2.9 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42430394-4347534767-0; collisions 2e678859c5e01d4406fa44622f081c7b, fb621a8c725eca79359f9864eaa7ced8, 4a47ee6b05937f54b5e259e673995b8f]
-2. 21st Street: 5 crashes since 2021 (range 0.5 to 9.5), against about 0.1 on similar streets. Main cause: Failure to Yield Right-of-Way. It stands out compared to similar streets. Watch out: Drivers here often fail to yield. At crossings, slow down and don't assume a turning car will stop. [edge 42825868-3569402143-0; collisions 5066b04df9bde7e2dd09f3282a5e3d98, 97e273792a552a09335c79f0b6a24259, 81322488bfa1b75f186c8a6dc359ce1a]
+2. 21st Street: 5 crashes since 2021 (range 1.6 to 11.7), against about 0.1 on similar streets. Main cause: Failure to Yield Right-of-Way. It stands out compared to similar streets. Watch out: Drivers here often fail to yield. At crossings, slow down and don't assume a turning car will stop. [edge 42825868-3569402143-0; collisions 5066b04df9bde7e2dd09f3282a5e3d98, 97e273792a552a09335c79f0b6a24259, 81322488bfa1b75f186c8a6dc359ce1a]
 
 ### Bike lanes and redesigns
 
@@ -259,9 +265,9 @@ Choosing the Balanced route over the Fastest route adds 7.0 minutes of travel ti
 
 ### Stretches that stand out
 
-1. 7th Avenue: 7 crashes since 2021 (range 1.7 to 12.3), against about 1.4 on similar streets. Main cause: Traffic Control Disregarded. It stands out compared to similar streets. Watch out: Drivers here have run lights and signs. Check cross traffic before you go, even on a green. [edge 42439952-42439955-0; collisions 628498aae7b24fe266df5356047b86bd, 63eb93345b611af174a6c0bffdf0c4f4, 2177de055e285dbd9f0dc6040b659f6c]
-2. 5th Avenue: 6 crashes since 2021 (range 1.1 to 10.9), against about 1.0 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42437644-42446701-0; collisions a296c9bbd01ad010d10126133e72b2a2, 1b9b7245944e4112c3bce9e29065895c, 31daf61468598b9c88d2e24612d1e4c6]
-3. West 34th Street: 5 crashes since 2021 (range 0.5 to 9.5), against about 0.2 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42430304-4886228959-0; collisions 5ca0debdc7b3de96b8176b0cec4c99bb, fdd5e0d17158216b5c1d52c66491d7a2, 0843c2a0303c144df842cf183b4c7c60]
+1. 7th Avenue: 7 crashes since 2021 (range 2.8 to 14.4), against about 1.4 on similar streets. Main cause: Traffic Control Disregarded. It stands out compared to similar streets. Watch out: Drivers here have run lights and signs. Check cross traffic before you go, even on a green. [edge 42439952-42439955-0; collisions 628498aae7b24fe266df5356047b86bd, 63eb93345b611af174a6c0bffdf0c4f4, 2177de055e285dbd9f0dc6040b659f6c]
+2. 5th Avenue: 6 crashes since 2021 (range 2.2 to 13.1), against about 1.0 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42437644-42446701-0; collisions a296c9bbd01ad010d10126133e72b2a2, 1b9b7245944e4112c3bce9e29065895c, 31daf61468598b9c88d2e24612d1e4c6]
+3. West 34th Street: 5 crashes since 2021 (range 1.6 to 11.7), against about 0.2 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42430304-4886228959-0; collisions 5ca0debdc7b3de96b8176b0cec4c99bb, fdd5e0d17158216b5c1d52c66491d7a2, 0843c2a0303c144df842cf183b4c7c60]
 
 ### Bike lanes and redesigns
 
@@ -371,10 +377,10 @@ Choosing this route adds 4.4 minutes to your daily round trip. [route:d8e2391c] 
 
 ### Stretches that stand out
 
-1. Flatbush Avenue: 9 crashes since 2021 (range 3.0 to 15.0), against about 0.6 on similar streets. Main cause: Failure to Yield Right-of-Way. It stands out compared to similar streets. Watch out: Drivers here often fail to yield. At crossings, slow down and don't assume a turning car will stop. [edge 42469253-42491599-0; collisions b2d3cd65a1168c8740f9f5cb4478931d, 5c65939a21daf40bf0ad22636f74e66b, af56a29743f5e911d6542917d0d78db8]
-2. Flatbush Avenue: 8 crashes since 2021 (range 2.3 to 13.7), against about 1.0 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42473595-42491632-0; collisions cb9c5f57dc6d0a3622cbde8b61892398, 5188dbe53e8d7559277cab67e301ac5e, d8a7fa65d1e4af19ff33cf738c1cb590]
-3. Jay Street: 7 crashes since 2021 (range 1.7 to 12.3), against about 1.2 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42482552-6324352259-0; collisions 9f028c39e2c364014381373523b14dbf, ef2abb45edce3e8775c0ea0a43d604bc, 719e7e52268a6a71f610dbdeac3bd429]
-4. Flatbush Avenue: 6 crashes since 2021 (range 1.1 to 10.9), against about 0.8 on similar streets. Main cause: Passing Too Closely. It stands out compared to similar streets. Watch out: Vehicles here pass too closely or use the lane badly. Hold a steady line and take the lane when it's too narrow to share. [edge 42491613-1372888639-0; collisions 4c5bd51f474ac788e9e2e8aec25649f3, 6b680db149470a1ed9b663be085fe260, 94880365a83e616da4754442d140d6ae]
+1. Flatbush Avenue: 9 crashes since 2021 (range 4.1 to 17.1), against about 0.6 on similar streets. Main cause: Failure to Yield Right-of-Way. It stands out compared to similar streets. Watch out: Drivers here often fail to yield. At crossings, slow down and don't assume a turning car will stop. [edge 42469253-42491599-0; collisions b2d3cd65a1168c8740f9f5cb4478931d, 5c65939a21daf40bf0ad22636f74e66b, af56a29743f5e911d6542917d0d78db8]
+2. Flatbush Avenue: 8 crashes since 2021 (range 3.5 to 15.8), against about 1.0 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42473595-42491632-0; collisions cb9c5f57dc6d0a3622cbde8b61892398, 5188dbe53e8d7559277cab67e301ac5e, d8a7fa65d1e4af19ff33cf738c1cb590]
+3. Jay Street: 7 crashes since 2021 (range 2.8 to 14.4), against about 1.2 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42482552-6324352259-0; collisions 9f028c39e2c364014381373523b14dbf, ef2abb45edce3e8775c0ea0a43d604bc, 719e7e52268a6a71f610dbdeac3bd429]
+4. Flatbush Avenue: 6 crashes since 2021 (range 2.2 to 13.1), against about 0.8 on similar streets. Main cause: Passing Too Closely. It stands out compared to similar streets. Watch out: Vehicles here pass too closely or use the lane badly. Hold a steady line and take the lane when it's too narrow to share. [edge 42491613-1372888639-0; collisions 4c5bd51f474ac788e9e2e8aec25649f3, 6b680db149470a1ed9b663be085fe260, 94880365a83e616da4754442d140d6ae]
 
 ### Bike lanes and redesigns
 

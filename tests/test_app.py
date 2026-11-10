@@ -3,6 +3,8 @@
 import json
 import time
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 import app
@@ -228,6 +230,28 @@ def test_questions_that_mention_rules_still_go_through(monkeypatch):
 
 def test_long_messages_are_declined():
     assert app.guard("x" * 501)["declined"] and app.guard("x" * 500) is None
+
+
+def test_empty_messages_are_declined_before_any_model_runs(monkeypatch):
+    lead = ScriptedLead(monkeypatch, "DONE")
+    for text in ["", "   ", "\n\t"]:
+        reply = client.post("/chat", json={"message": text}).json()
+        assert reply["declined"] and not reply["error"] and "type a question" in reply["response"], repr(text)
+    assert lead.inputs == []
+
+
+def test_declined_messages_do_not_use_up_the_daily_cap(monkeypatch):
+    reset()
+    lead = ScriptedLead(monkeypatch, "DONE")
+    app.day_count.update(day=time.strftime("%Y-%m-%d", time.localtime(time.time() - 5 * 3600)), n=app.PER_INSTANCE_PER_DAY - 1)
+    for text in [INJECTIONS[0], "x" * 600, ""]:
+        reply = client.post("/chat", json={"message": text}, headers={"x-forwarded-for": "9.9.9.1"})
+        assert reply.status_code == 200 and reply.json()["declined"], text[:40]
+    with client.stream("GET", "/run", params={"message": INJECTIONS[0]}, headers={"x-forwarded-for": "9.9.9.2"}) as r:
+        last = [json.loads(line[6:]) for line in r.iter_lines() if line.startswith("data: ")][-1]
+    assert last["type"] == "done" and last["declined"]
+    assert app.day_count["n"] == app.PER_INSTANCE_PER_DAY - 1 and lead.inputs == []  # one trip is still left today
+    reset()
 
 
 def test_off_topic_is_declined_in_one_sentence(monkeypatch):
@@ -577,3 +601,44 @@ def test_about_sixty_landmarks_every_one_routable():
     for name in ["Madison Square Garden", "Metropolitan Museum of Art", "MoMA", "Barclays Center", "Yankee Stadium",
                  "Flushing Meadows Corona Park", "Manhattan Bridge", "Queensboro Bridge", "Chelsea Market"]:
         assert app.tools.geocode(name)["label"].startswith(name), name
+
+
+# --- Pick on map: /reverse ---
+
+def test_reverse_gives_a_readable_address_and_routes_from_the_pin(monkeypatch):
+    class Reply:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"features": [{"properties": {"label": "336 5 AVENUE, New York, NY, USA", "borough": "Manhattan", "distance": 0.006}}]}
+    monkeypatch.setattr(app.tools.httpx, "get", lambda *args, **kwargs: Reply())
+    found = client.get("/reverse", params={"lat": 40.7484, "lon": -73.9857}).json()
+    assert found == {"value": "336 5th Avenue, Manhattan", "lat": 40.7484, "lon": -73.9857, "address": True}
+    place = app.tools.geocode("336 5th Avenue, Manhattan")  # routing starts at the pin itself
+    assert (place["lat"], place["lon"]) == (40.7484, -73.9857)
+
+
+def test_reverse_falls_back_to_coordinates_that_still_route(monkeypatch):
+    def down(*args, **kwargs):
+        raise app.tools.httpx.ConnectTimeout("down")
+    monkeypatch.setattr(app.tools.httpx, "get", down)
+    found = client.get("/reverse", params={"lat": 40.7484, "lon": -73.9857}).json()
+    assert found["value"] == "40.7484, -73.9857" and found["address"] is False
+    assert app.tools.geocode(found["value"])["lat"] == 40.7484
+
+
+@pytest.mark.parametrize("where, lat, lon", [("Jersey City", 40.7178, -74.0431), ("Fort Lee", 40.8509, -73.9701),
+                                             ("Elmont", 40.7085, -73.7240), ("Yonkers", 40.9312, -73.8988), ("Philadelphia", 39.95, -75.16)])
+def test_reverse_rejects_spots_outside_nyc(monkeypatch, where, lat, lon):
+    monkeypatch.setattr(app.tools.httpx, "get", lambda *a, **k: pytest.fail("no lookup for a spot outside NYC"))
+    assert client.get("/reverse", params={"lat": lat, "lon": lon}).json() == {"error": "That spot is outside NYC, so it can't be routed.", "outside": True}
+
+
+def test_reverse_rejects_the_water_but_not_the_shore(monkeypatch):
+    def down(*args, **kwargs):
+        raise app.tools.httpx.ConnectTimeout("down")
+    monkeypatch.setattr(app.tools.httpx, "get", down)
+    assert "in the water" in client.get("/reverse", params={"lat": 40.7300, "lon": -73.9670}).json()["error"]  # East River
+    for lat, lon in [(40.7812, -73.9665), (40.5795, -74.1502), (40.8670, -73.8100), (40.6602, -73.9690)]:  # each borough
+        assert "error" not in client.get("/reverse", params={"lat": lat, "lon": lon}).json(), (lat, lon)

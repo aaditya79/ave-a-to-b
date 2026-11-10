@@ -28,6 +28,24 @@ EXACT_LOW = "[" + ", ".join(f"{tools.range_bounds(k)[0]:.1f}" for k in range(10)
 EXACT_HIGH = "[" + ", ".join(f"{tools.range_bounds(k)[1]:.1f}" for k in range(10)) + "]"
 
 
+def range_sql(count: str, name: str) -> str:
+    """tools.range_bounds as DuckDB: the exact range below 10 crashes, n ± 2 × √n (floored at 0) from 10 up."""
+    return (f"CASE WHEN {count} < 10 THEN {EXACT_LOW}[{count} + 1] ELSE round(greatest(0, {count} - 2 * sqrt({count})), 1) END AS {name}_low,\n"
+            f"       CASE WHEN {count} < 10 THEN {EXACT_HIGH}[{count} + 1] ELSE round({count} + 2 * sqrt({count}), 1) END AS {name}_high")
+
+
+def ranges_in(value, path="map"):
+    """Every {n, low, high} in an answer's map, with where it is."""
+    if isinstance(value, dict):
+        if set(value) >= {"n", "low", "high"}:
+            yield path, value
+        for k, v in value.items():
+            yield from ranges_in(v, f"{path}.{k}")
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            yield from ranges_in(v, f"{path}[{i}]")
+
+
 def routed(runs: list[dict]) -> list[dict]:
     """The runs that answered with routes; a clarifying question has none."""
     return [run for run in runs if run.get("map")]
@@ -81,7 +99,7 @@ FROM 'docs/sample_routes.csv' JOIN 'data/edges.parquet' e USING (edge_id)
 WHERE query = {number}
 GROUP BY route ORDER BY risk;"""
     out.append({"what": f"Safety label '{label}' and recommended route '{run['map']['recommended_route']}'. "
-                        "Rule: 'safest' needs the lowest-risk route's range (risk × (n ± 2 × √n) / n) to sit below every other "
+                        "Rule: 'safest' needs the lowest-risk route's range (risk × range(n) / n, with n the expected crash count) to sit below every other "
                         "route's range at all three settings; overlapping ranges mean 'about equally safe', and the faster of "
                         "the tied routes is recommended. The query shows the assumed setting; swap in route_risk_half and "
                         "route_risk_double for the other two.",
@@ -91,8 +109,7 @@ GROUP BY route ORDER BY risk;"""
     if run["map"]["hotspots"]:
         h = run["map"]["hotspots"][0]
         sql = f"""SELECT count(*) AS crashes_since_2021,
-       CASE WHEN count(*) < 10 THEN {EXACT_LOW}[count(*) + 1] ELSE round(count(*) - 2 * sqrt(count(*)), 1) END AS range_low,
-       CASE WHEN count(*) < 10 THEN {EXACT_HIGH}[count(*) + 1] ELSE round(count(*) + 2 * sqrt(count(*)), 1) END AS range_high,
+       {range_sql("count(*)", "range")},
        (SELECT round(crash_class_rate * mile_years, 1) FROM 'data/edges.parquet' WHERE edge_id = '{h['edge_id']}') AS similar_streets_expected,
        (SELECT contributing_factor_vehicle_1 FROM 'data/crash_locations.parquet' l2 JOIN 'data/crashes.parquet' c2 USING (collision_id)
         WHERE l2.edge_id = '{h['edge_id']}' AND contributing_factor_vehicle_1 NOT IN {NOT_A_CAUSE}
@@ -105,6 +122,8 @@ WHERE l.edge_id = '{h['edge_id']}';"""
                                 f"{h['similar_streets_expected']} expected on similar streets, main cause {h['main_cause']}",
                     "files": "data/crash_locations.parquet (edge_id), data/crashes.parquet (contributing_factor_vehicle_1), data/edges.parquet (crash_class_rate, mile_years)",
                     "sql": sql, "check": lambda df, h=h: int(df.crashes_since_2021[0]) == h["crashes"]["n"] and
+                                                       abs(df.range_low[0] - h["crashes"]["low"]) < 0.051 and
+                                                       abs(df.range_high[0] - h["crashes"]["high"]) < 0.051 and
                                                        abs(df.similar_streets_expected[0] - h["similar_streets_expected"]) < 0.051})
         first = h["collision_ids"][0]
         out.append({"what": f"One police report behind stretch 1, in the city's own copy of the crash table. Its street names "
@@ -122,20 +141,39 @@ WHERE l.edge_id = '{h['edge_id']}';"""
             match = f"b.project LIKE '%: {r['project']}'"
         else:
             match = f"b.project LIKE 'bike route%' AND e.name = '{r['project'].removeprefix('Lane on ')}'"
-        sql = f"""SELECT sum(b.crashes_pre) AS crashes_before, sum(b.crashes_post) AS crashes_after,
-       round(sum(b.crashes_pre) / (sum(b.length_mi * b.pre_years) / sum(b.length_mi)), 1) AS per_year_before,
-       round(sum(b.crashes_post) / (sum(b.length_mi * b.post_years) / sum(b.length_mi)), 1) AS per_year_after,
-       round(sum(b.control_pre_rate * b.length_mi * b.pre_years) / sum(b.length_mi * b.pre_years) * sum(b.length_mi), 1) AS similar_streets_before,
-       round(sum(b.control_post_rate * b.length_mi * b.post_years) / sum(b.length_mi * b.post_years) * sum(b.length_mi), 1) AS similar_streets_after
-FROM 'data/before_after.parquet' b JOIN 'data/edges.parquet' e USING (edge_id)
-WHERE b.treatment = '{treatment}' AND {match}
-  AND b.edge_id IN (SELECT edge_id FROM 'docs/sample_routes.csv' WHERE query = {number});"""
-        y = r["crashes_per_year"]
-        out.append({"what": f"Before and after: {r['project']} ({r['year']}, {r['kind']}). Crashes per year on the changed street, "
-                            "and on similar unchanged streets scaled to the same length.",
-                    "expected": f"{y['before']} → {y['after']} a year; similar streets {y['comparison_before']} → {y['comparison_after']}",
+        sql = f"""WITH b AS (SELECT b.*, e.name FROM 'data/before_after.parquet' b JOIN 'data/edges.parquet' e USING (edge_id)
+           WHERE b.treatment = '{treatment}' AND {match}
+             AND b.edge_id IN (SELECT edge_id FROM 'docs/sample_routes.csv' WHERE query = {number})),
+     totals AS (SELECT sum(crashes_pre)::INT AS crashes_before, sum(crashes_post)::INT AS crashes_after FROM b)
+SELECT crashes_before, {range_sql("crashes_before", "before")},
+       crashes_after, {range_sql("crashes_after", "after")},
+       (SELECT round(sum(crashes_pre) / (sum(length_mi * pre_years) / sum(length_mi)), 1) FROM b) AS per_year_before,
+       (SELECT round(sum(crashes_post) / (sum(length_mi * post_years) / sum(length_mi)), 1) FROM b) AS per_year_after,
+       (SELECT round(sum(control_pre_rate * length_mi * pre_years) / sum(length_mi * pre_years) * sum(length_mi), 1) FROM b) AS similar_streets_before,
+       (SELECT round(sum(control_post_rate * length_mi * post_years) / sum(length_mi * post_years) * sum(length_mi), 1) FROM b) AS similar_streets_after
+FROM totals;"""
+        y, cb, ca = r["crashes_per_year"], r["crashes_before"], r["crashes_after"]
+        out.append({"what": f"Before and after: {r['project']} ({r['year']}, {r['kind']}). Crashes on the changed street, with their "
+                            "ranges, and crashes per year there and on similar unchanged streets scaled to the same length.",
+                    "expected": f"{cb['n']} crashes before (range {cb['low']} to {cb['high']}) and {ca['n']} after (range {ca['low']} to "
+                                f"{ca['high']}); {y['before']} → {y['after']} a year; similar streets {y['comparison_before']} → {y['comparison_after']}",
                     "files": "data/before_after.parquet (crashes_pre, crashes_post, pre_years, post_years, control_pre_rate, control_post_rate), data/edges.parquet (name)",
-                    "sql": sql, "check": lambda df, y=y: abs(df.per_year_before[0] - y["before"]) < 0.051 and abs(df.per_year_after[0] - y["after"]) < 0.051})
+                    "sql": sql, "check": lambda df, y=y, cb=cb, ca=ca: abs(df.per_year_before[0] - y["before"]) < 0.051 and
+                                                                     abs(df.per_year_after[0] - y["after"]) < 0.051 and
+                                                                     (int(df.crashes_before[0]), int(df.crashes_after[0])) == (cb["n"], ca["n"]) and
+                                                                     all(abs(df[f"{w}_{e}"][0] - c[e]) < 0.051 for w, c in (("before", cb), ("after", ca)) for e in ("low", "high"))})
+
+    # Every range anywhere in the answer's map (route table, stretches, before and after) against tools.count_range
+    stale = [f"{where}: {c['n']} as {c['low']} to {c['high']}" for where, c in ranges_in(run["map"])
+             if (c["low"], c["high"]) != tuple(tools.count_range(c["n"])[k] for k in ("low", "high"))]
+    def all_current(df, stale=stale) -> bool:
+        for line in stale:
+            print("   stale range:", line)
+        return not stale
+    out.append({"what": "Every crash range in the answer (route table, stretches, before and after) uses today's range function",
+                "expected": f"{sum(1 for _ in ranges_in(run['map']))} ranges, each tools.count_range(n)",
+                "files": "tools.py (range_bounds); the same rule as the SQL above",
+                "sql": "SELECT 1 AS checked_in_python;", "check": all_current})
     return out
 
 
@@ -149,7 +187,9 @@ def main():
              "from and a DuckDB query that recomputes it from the raw Parquet files, without any project code. Run the queries",
              "from the repo root, in the DuckDB command line (`duckdb`) or in Python with `duckdb.sql(query).df()`.",
              "`docs/sample_routes.csv` lists every segment of each route, in order, as routed on the live site.\n",
-             "A range is n ± 2 × √n, floored at 0.\n"]
+             "A range is the 95% range of a crash count: the exact Poisson range below 10 crashes (0 gives 0 to 3.7, 7 gives",
+             "2.8 to 14.4) and n ± 2 × √n, floored at 0, from 10 up. The ranges code builds were recomputed with that rule by",
+             "`build/refresh_ranges.py`; see the note at the top of docs/traces.md.\n"]
     failures = 0
     for number, run in enumerate(runs, start=1):
         lines.append(f"## Query {number}: {run['question']}\n")

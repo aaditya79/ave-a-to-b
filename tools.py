@@ -7,6 +7,7 @@ contents, so the Verifier can re-run a tool and get the same answer.
 
 import functools
 import hashlib
+import json
 import math
 import re
 import threading
@@ -340,6 +341,63 @@ def _tidy(label: str) -> str:
     parts = [re.sub(r"'S\b", "'s", p.title()) if p.isupper() else p for p in label.split(", ")]
     parts[0] = re.sub(r"\bB'Way\b", "Broadway", parts[0])  # the city's short spelling, so it dedupes
     return re.sub(r"\b(\d+)(St|Nd|Rd|Th)\b", lambda m: m[1] + m[2].lower(), ", ".join(parts))
+
+
+# --- A point picked on the map: inside the city line, on land, then a readable address ---
+
+_BOUNDARY = json.loads((DATA / "nyc_boundary.json").read_text())
+OUTSIDE_NYC = "That spot is outside NYC, so it can't be routed."
+IN_WATER = "That spot is in the water, so it can't be routed. Pick a spot on land."
+
+
+def _inside(rings: list, lat: float, lon: float) -> bool:
+    """Even-odd rule over every ring: a ray east from the point crosses the outline an odd number of times."""
+    crossings = 0
+    for ring in rings:
+        a = np.asarray(ring)
+        x1, y1, x2, y2 = a[:-1, 0], a[:-1, 1], a[1:, 0], a[1:, 1]
+        spans = (y1 > lat) != (y2 > lat)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            x_at = x1 + (lat - y1) * (x2 - x1) / (y2 - y1)
+        crossings += int(np.count_nonzero(spans & (lon < x_at)))
+    return crossings % 2 == 1
+
+
+def _ordinal_streets(text: str) -> str:
+    """'336 5 Avenue' -> '336 5th Avenue', 'East 34 Street' -> 'East 34th Street'. A house number stays as it is."""
+    def nth(m):
+        n = int(m[2])
+        suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+        return f"{m[1]}{n}{suffix} {m[3]}"
+    return re.sub(r"(^|\s)(\d+) (Avenue|Street|Road|Place|Drive|Terrace|Lane)\b", lambda m: nth(m) if m.start(2) > 0 or not re.match(r"\d+ \d", text) else m[0], text)
+
+
+def coords_label(lat: float, lon: float) -> str:
+    return f"{lat:.4f}, {lon:.4f}"
+
+
+def pick_point(lat: float, lon: float) -> dict:
+    """For "Pick on map": an error for a spot outside NYC or in the water; otherwise a readable address
+    from NYC GeoSearch's reverse lookup, or the coordinates if that fails. The address is remembered
+    at this exact point, so routing from it starts where the pin is."""
+    if not _inside(_BOUNDARY["city"], lat, lon):
+        return {"error": OUTSIDE_NYC, "outside": True}
+    if not _inside(_BOUNDARY["land"], lat, lon):
+        return {"error": IN_WATER}
+    value = coords_label(lat, lon)
+    try:
+        response = httpx.get("https://geosearch.planninglabs.nyc/v2/reverse",
+                             params={"point.lat": lat, "point.lon": lon, "size": 1}, timeout=4)
+        response.raise_for_status()
+        found = response.json().get("features", [])
+        if found and found[0]["properties"].get("distance", 1) <= 0.15:  # within 150 m, or it names a different spot
+            props = found[0]["properties"]
+            street, borough = _ordinal_streets(_tidy(props.get("name") or props.get("label", "").split(",")[0])), props.get("borough") or ""
+            value = f"{street}, {borough}" if borough else street
+    except (httpx.HTTPError, ValueError, KeyError):
+        pass  # the coordinates still route
+    _geocoded[value] = {"label": value, "lat": lat, "lon": lon, "source": "map pin"}
+    return {"value": value, "lat": lat, "lon": lon, "address": value != coords_label(lat, lon)}
 
 
 def _place(address: str) -> dict | None:

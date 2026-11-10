@@ -5,7 +5,9 @@ from and a DuckDB query that recomputes it from the raw Parquet files, without a
 from the repo root, in the DuckDB command line (`duckdb`) or in Python with `duckdb.sql(query).df()`.
 `docs/sample_routes.csv` lists every segment of each route, in order, as routed on the live site.
 
-A range is n ± 2 × √n, floored at 0.
+A range is the 95% range of a crash count: the exact Poisson range below 10 crashes (0 gives 0 to 3.7, 7 gives
+2.8 to 14.4) and n ± 2 × √n, floored at 0, from 10 up. The ranges code builds were recomputed with that rule by
+`build/refresh_ranges.py`; see the note at the top of docs/traces.md.
 
 ## Query 1: I bike from Astoria, Queens to Times Square. Which route should I take?
 
@@ -29,7 +31,7 @@ WHERE r.query = 1
 GROUP BY r.route ORDER BY minutes;
 ```
 
-**Safety label 'about_equally_safe' and recommended route 'balanced'. Rule: 'safest' needs the lowest-risk route's range (risk × (n ± 2 × √n) / n) to sit below every other route's range at all three settings; overlapping ranges mean 'about equally safe', and the faster of the tied routes is recommended. The query shows the assumed setting; swap in route_risk_half and route_risk_double for the other two.**
+**Safety label 'about_equally_safe' and recommended route 'balanced'. Rule: 'safest' needs the lowest-risk route's range (risk × range(n) / n, with n the expected crash count) to sit below every other route's range at all three settings; overlapping ranges mean 'about equally safe', and the faster of the tied routes is recommended. The query shows the assumed setting; swap in route_risk_half and route_risk_double for the other two.**
 
 - Agent's answer: about_equally_safe.
 - Source: docs/sample_routes.csv, data/edges.parquet (route_risk_*, crash_blended_rate, mile_years)
@@ -52,7 +54,7 @@ GROUP BY route ORDER BY risk;
 
 ```sql
 SELECT count(*) AS crashes_since_2021,
-       CASE WHEN count(*) < 10 THEN [0.0, 0.0, 0.2, 0.6, 1.1, 1.6, 2.2, 2.8, 3.5, 4.1][count(*) + 1] ELSE round(count(*) - 2 * sqrt(count(*)), 1) END AS range_low,
+       CASE WHEN count(*) < 10 THEN [0.0, 0.0, 0.2, 0.6, 1.1, 1.6, 2.2, 2.8, 3.5, 4.1][count(*) + 1] ELSE round(greatest(0, count(*) - 2 * sqrt(count(*))), 1) END AS range_low,
        CASE WHEN count(*) < 10 THEN [3.7, 5.6, 7.2, 8.8, 10.2, 11.7, 13.1, 14.4, 15.8, 17.1][count(*) + 1] ELSE round(count(*) + 2 * sqrt(count(*)), 1) END AS range_high,
        (SELECT round(crash_class_rate * mile_years, 1) FROM 'data/edges.parquet' WHERE edge_id = '42430394-4347534767-0') AS similar_streets_expected,
        (SELECT contributing_factor_vehicle_1 FROM 'data/crash_locations.parquet' l2 JOIN 'data/crashes.parquet' c2 USING (collision_id)
@@ -70,6 +72,15 @@ WHERE l.edge_id = '42430394-4347534767-0';
 ```sql
 -- open in a browser:
 -- https://data.cityofnewyork.us/resource/h9gi-nx95.json?collision_id=2e678859c5e01d4406fa44622f081c7b
+```
+
+**Every crash range in the answer (route table, stretches, before and after) uses today's range function**
+
+- Agent's answer: 15 ranges, each tools.count_range(n). Recomputed by the query: matches.
+- Source: tools.py (range_bounds); the same rule as the SQL above
+
+```sql
+SELECT 1 AS checked_in_python;
 ```
 
 ## Query 2: I bike from Columbia University to Union Square, Manhattan around 8am. Which route should I take?
@@ -94,7 +105,7 @@ WHERE r.query = 2
 GROUP BY r.route ORDER BY minutes;
 ```
 
-**Safety label 'about_equally_safe' and recommended route 'balanced'. Rule: 'safest' needs the lowest-risk route's range (risk × (n ± 2 × √n) / n) to sit below every other route's range at all three settings; overlapping ranges mean 'about equally safe', and the faster of the tied routes is recommended. The query shows the assumed setting; swap in route_risk_half and route_risk_double for the other two.**
+**Safety label 'about_equally_safe' and recommended route 'balanced'. Rule: 'safest' needs the lowest-risk route's range (risk × range(n) / n, with n the expected crash count) to sit below every other route's range at all three settings; overlapping ranges mean 'about equally safe', and the faster of the tied routes is recommended. The query shows the assumed setting; swap in route_risk_half and route_risk_double for the other two.**
 
 - Agent's answer: about_equally_safe.
 - Source: docs/sample_routes.csv, data/edges.parquet (route_risk_*, crash_blended_rate, mile_years)
@@ -112,12 +123,12 @@ GROUP BY route ORDER BY risk;
 
 **Stretch 1 that stands out: 7th Avenue (segment 42439952-42439955-0). It stands out because range_low is above similar_streets_expected.**
 
-- Agent's answer: 7 crashes (range 1.7 to 12.3), about 1.4 expected on similar streets, main cause Traffic Control Disregarded. Recomputed by the query: matches.
+- Agent's answer: 7 crashes (range 2.8 to 14.4), about 1.4 expected on similar streets, main cause Traffic Control Disregarded. Recomputed by the query: matches.
 - Source: data/crash_locations.parquet (edge_id), data/crashes.parquet (contributing_factor_vehicle_1), data/edges.parquet (crash_class_rate, mile_years)
 
 ```sql
 SELECT count(*) AS crashes_since_2021,
-       CASE WHEN count(*) < 10 THEN [0.0, 0.0, 0.2, 0.6, 1.1, 1.6, 2.2, 2.8, 3.5, 4.1][count(*) + 1] ELSE round(count(*) - 2 * sqrt(count(*)), 1) END AS range_low,
+       CASE WHEN count(*) < 10 THEN [0.0, 0.0, 0.2, 0.6, 1.1, 1.6, 2.2, 2.8, 3.5, 4.1][count(*) + 1] ELSE round(greatest(0, count(*) - 2 * sqrt(count(*))), 1) END AS range_low,
        CASE WHEN count(*) < 10 THEN [3.7, 5.6, 7.2, 8.8, 10.2, 11.7, 13.1, 14.4, 15.8, 17.1][count(*) + 1] ELSE round(count(*) + 2 * sqrt(count(*)), 1) END AS range_high,
        (SELECT round(crash_class_rate * mile_years, 1) FROM 'data/edges.parquet' WHERE edge_id = '42439952-42439955-0') AS similar_streets_expected,
        (SELECT contributing_factor_vehicle_1 FROM 'data/crash_locations.parquet' l2 JOIN 'data/crashes.parquet' c2 USING (collision_id)
@@ -137,20 +148,34 @@ WHERE l.edge_id = '42439952-42439955-0';
 -- https://data.cityofnewyork.us/resource/h9gi-nx95.json?collision_id=628498aae7b24fe266df5356047b86bd
 ```
 
-**Before and after: Lane on 7th Avenue (2022, new protected lane). Crashes per year on the changed street, and on similar unchanged streets scaled to the same length.**
+**Before and after: Lane on 7th Avenue (2022, new protected lane). Crashes on the changed street, with their ranges, and crashes per year there and on similar unchanged streets scaled to the same length.**
 
-- Agent's answer: 14.2 → 9.4 a year; similar streets 3.7 → 3.6. Recomputed by the query: matches.
+- Agent's answer: 39 crashes before (range 26.5 to 51.5) and 29 after (range 18.2 to 39.8); 14.2 → 9.4 a year; similar streets 3.7 → 3.6. Recomputed by the query: matches.
 - Source: data/before_after.parquet (crashes_pre, crashes_post, pre_years, post_years, control_pre_rate, control_post_rate), data/edges.parquet (name)
 
 ```sql
-SELECT sum(b.crashes_pre) AS crashes_before, sum(b.crashes_post) AS crashes_after,
-       round(sum(b.crashes_pre) / (sum(b.length_mi * b.pre_years) / sum(b.length_mi)), 1) AS per_year_before,
-       round(sum(b.crashes_post) / (sum(b.length_mi * b.post_years) / sum(b.length_mi)), 1) AS per_year_after,
-       round(sum(b.control_pre_rate * b.length_mi * b.pre_years) / sum(b.length_mi * b.pre_years) * sum(b.length_mi), 1) AS similar_streets_before,
-       round(sum(b.control_post_rate * b.length_mi * b.post_years) / sum(b.length_mi * b.post_years) * sum(b.length_mi), 1) AS similar_streets_after
-FROM 'data/before_after.parquet' b JOIN 'data/edges.parquet' e USING (edge_id)
-WHERE b.treatment = 'lane: protected' AND b.project LIKE 'bike route%' AND e.name = '7th Avenue'
-  AND b.edge_id IN (SELECT edge_id FROM 'docs/sample_routes.csv' WHERE query = 2);
+WITH b AS (SELECT b.*, e.name FROM 'data/before_after.parquet' b JOIN 'data/edges.parquet' e USING (edge_id)
+           WHERE b.treatment = 'lane: protected' AND b.project LIKE 'bike route%' AND e.name = '7th Avenue'
+             AND b.edge_id IN (SELECT edge_id FROM 'docs/sample_routes.csv' WHERE query = 2)),
+     totals AS (SELECT sum(crashes_pre)::INT AS crashes_before, sum(crashes_post)::INT AS crashes_after FROM b)
+SELECT crashes_before, CASE WHEN crashes_before < 10 THEN [0.0, 0.0, 0.2, 0.6, 1.1, 1.6, 2.2, 2.8, 3.5, 4.1][crashes_before + 1] ELSE round(greatest(0, crashes_before - 2 * sqrt(crashes_before)), 1) END AS before_low,
+       CASE WHEN crashes_before < 10 THEN [3.7, 5.6, 7.2, 8.8, 10.2, 11.7, 13.1, 14.4, 15.8, 17.1][crashes_before + 1] ELSE round(crashes_before + 2 * sqrt(crashes_before), 1) END AS before_high,
+       crashes_after, CASE WHEN crashes_after < 10 THEN [0.0, 0.0, 0.2, 0.6, 1.1, 1.6, 2.2, 2.8, 3.5, 4.1][crashes_after + 1] ELSE round(greatest(0, crashes_after - 2 * sqrt(crashes_after)), 1) END AS after_low,
+       CASE WHEN crashes_after < 10 THEN [3.7, 5.6, 7.2, 8.8, 10.2, 11.7, 13.1, 14.4, 15.8, 17.1][crashes_after + 1] ELSE round(crashes_after + 2 * sqrt(crashes_after), 1) END AS after_high,
+       (SELECT round(sum(crashes_pre) / (sum(length_mi * pre_years) / sum(length_mi)), 1) FROM b) AS per_year_before,
+       (SELECT round(sum(crashes_post) / (sum(length_mi * post_years) / sum(length_mi)), 1) FROM b) AS per_year_after,
+       (SELECT round(sum(control_pre_rate * length_mi * pre_years) / sum(length_mi * pre_years) * sum(length_mi), 1) FROM b) AS similar_streets_before,
+       (SELECT round(sum(control_post_rate * length_mi * post_years) / sum(length_mi * post_years) * sum(length_mi), 1) FROM b) AS similar_streets_after
+FROM totals;
+```
+
+**Every crash range in the answer (route table, stretches, before and after) uses today's range function**
+
+- Agent's answer: 22 ranges, each tools.count_range(n). Recomputed by the query: matches.
+- Source: tools.py (range_bounds); the same rule as the SQL above
+
+```sql
+SELECT 1 AS checked_in_python;
 ```
 
 ## Query 3: I bike from Prospect Heights, Brooklyn to DUMBO, Brooklyn in the evening, around 6pm. Which route should I take?
@@ -175,7 +200,7 @@ WHERE r.query = 3
 GROUP BY r.route ORDER BY minutes;
 ```
 
-**Safety label 'safest' and recommended route 'balanced'. Rule: 'safest' needs the lowest-risk route's range (risk × (n ± 2 × √n) / n) to sit below every other route's range at all three settings; overlapping ranges mean 'about equally safe', and the faster of the tied routes is recommended. The query shows the assumed setting; swap in route_risk_half and route_risk_double for the other two.**
+**Safety label 'safest' and recommended route 'balanced'. Rule: 'safest' needs the lowest-risk route's range (risk × range(n) / n, with n the expected crash count) to sit below every other route's range at all three settings; overlapping ranges mean 'about equally safe', and the faster of the tied routes is recommended. The query shows the assumed setting; swap in route_risk_half and route_risk_double for the other two.**
 
 - Agent's answer: safest.
 - Source: docs/sample_routes.csv, data/edges.parquet (route_risk_*, crash_blended_rate, mile_years)
@@ -193,12 +218,12 @@ GROUP BY route ORDER BY risk;
 
 **Stretch 1 that stands out: Flatbush Avenue (segment 42469253-42491599-0). It stands out because range_low is above similar_streets_expected.**
 
-- Agent's answer: 9 crashes (range 3.0 to 15.0), about 0.6 expected on similar streets, main cause Failure to Yield Right-of-Way. Recomputed by the query: matches.
+- Agent's answer: 9 crashes (range 4.1 to 17.1), about 0.6 expected on similar streets, main cause Failure to Yield Right-of-Way. Recomputed by the query: matches.
 - Source: data/crash_locations.parquet (edge_id), data/crashes.parquet (contributing_factor_vehicle_1), data/edges.parquet (crash_class_rate, mile_years)
 
 ```sql
 SELECT count(*) AS crashes_since_2021,
-       CASE WHEN count(*) < 10 THEN [0.0, 0.0, 0.2, 0.6, 1.1, 1.6, 2.2, 2.8, 3.5, 4.1][count(*) + 1] ELSE round(count(*) - 2 * sqrt(count(*)), 1) END AS range_low,
+       CASE WHEN count(*) < 10 THEN [0.0, 0.0, 0.2, 0.6, 1.1, 1.6, 2.2, 2.8, 3.5, 4.1][count(*) + 1] ELSE round(greatest(0, count(*) - 2 * sqrt(count(*))), 1) END AS range_low,
        CASE WHEN count(*) < 10 THEN [3.7, 5.6, 7.2, 8.8, 10.2, 11.7, 13.1, 14.4, 15.8, 17.1][count(*) + 1] ELSE round(count(*) + 2 * sqrt(count(*)), 1) END AS range_high,
        (SELECT round(crash_class_rate * mile_years, 1) FROM 'data/edges.parquet' WHERE edge_id = '42469253-42491599-0') AS similar_streets_expected,
        (SELECT contributing_factor_vehicle_1 FROM 'data/crash_locations.parquet' l2 JOIN 'data/crashes.parquet' c2 USING (collision_id)
@@ -216,4 +241,13 @@ WHERE l.edge_id = '42469253-42491599-0';
 ```sql
 -- open in a browser:
 -- https://data.cityofnewyork.us/resource/h9gi-nx95.json?collision_id=b2d3cd65a1168c8740f9f5cb4478931d
+```
+
+**Every crash range in the answer (route table, stretches, before and after) uses today's range function**
+
+- Agent's answer: 15 ranges, each tools.count_range(n). Recomputed by the query: matches.
+- Source: tools.py (range_bounds); the same rule as the SQL above
+
+```sql
+SELECT 1 AS checked_in_python;
 ```

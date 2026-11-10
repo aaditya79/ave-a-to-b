@@ -16,6 +16,12 @@ that finish at nearly the same time ran in parallel. `Pipeline` rows are code: t
 before/after results, which the page and the answer show exactly as computed. `Verifier` rows are code re-running
 the tool calls behind every ref and edge ID the Writer cited, before the Verifier model compares them.
 The raw responses, with full tool results, are in `docs/traces.json`.
+
+These runs were recorded before ranges for fewer than 10 crashes switched from n ± 2 × √n to the exact range
+(`tools.range_bounds`). The ranges code builds (the route table, the stretches, and the before and after
+results) were recomputed with today's method by `build/refresh_ranges.py`, with no model calls. The Researchers'
+findings and the recorded tool results are left as they ran, so a small count there can show the older range:
+7 crashes as 1.7 to 12.3 where the app now shows 2.8 to 14.4.
 """
 
 
