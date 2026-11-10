@@ -263,7 +263,10 @@
             .menu { margin-top: 12px; }
             .menu > summary { display: inline-flex; list-style: none; }
             .menu > summary::-webkit-details-marker { display: none; }
-            .share-menu { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; align-items: center; }
+            .share-wrap { position: relative; display: inline-flex; }
+            .share-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; display: grid; min-width: 180px; padding: 4px; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+            .share-item { display: block; text-align: left; background: none; border: 0; border-radius: 8px; padding: 9px 12px; font-size: 15px; font-weight: 500; color: var(--navy); text-decoration: none; cursor: pointer; }
+            .share-item:hover, .share-item:focus-visible { background: var(--blue-soft); outline: none; }
             details.streets { margin-top: 12px; }
             ol.street-list { margin: 8px 0 0; padding-left: 22px; font-size: 14px; columns: 2; column-gap: 24px; }
             ol.street-list li { break-inside: avoid; }
@@ -1235,7 +1238,7 @@
                     el("a", { class: "btn small", href: googleMapsUrl(r), target: "_blank", rel: "noopener", title: "Google may change the route between the key turns" }, "Open in Google Maps", el("span", { class: "approx" }, "approximate")),
                     el("a", { class: "btn small", href: appleMapsUrl(), target: "_blank", rel: "noopener", title: "Apple Maps picks its own route between A and B" }, "Open in Apple Maps", el("span", { class: "approx" }, "approximate")),
                     el("button", { class: "btn small", type: "button", onclick: () => downloadGpx(r), title: "The exact route, for a bike computer or app" }, "Download GPX"),
-                    el("button", { class: "btn small", type: "button", onclick: (e) => share(r, e.currentTarget) }, "Share"));
+                    el("span", { class: "share-wrap" }, el("button", { class: "btn small share-btn", type: "button", "aria-haspopup": "menu", "aria-expanded": "false", onclick: (e) => share(r, e.currentTarget) }, "Share ▾")));
             }
             // --- Ride preview: the camera follows the recommended route and stops at each stretch to watch ---
             const PREVIEW_METERS_PER_SECOND = 220; // a 6-mile route takes about 45 seconds
@@ -1362,30 +1365,45 @@
             }
             function shareUrl() {
                 const params = new URLSearchParams();
-                if (state.trip) {
+                if (state.saved) params.set("example", state.saved.key); // a saved example shares as itself
+                else if (state.trip) {
                     params.set("from", state.trip.start);
                     params.set("to", state.trip.end);
                     if (state.trip.when) params.set("when", state.trip.when);
                 }
                 return location.origin + location.pathname + (params.toString() ? "?" + params : "");
             }
-            async function share(route, button) {
+            // Share: a small menu under the button. Phones with the Web Share API also get "Share via…" first.
+            function closeShare() {
+                document.querySelectorAll(".share-menu").forEach((m) => m.remove());
+                document.querySelectorAll(".share-btn[aria-expanded=true]").forEach((b) => b.setAttribute("aria-expanded", "false"));
+            }
+            function share(route, button) {
+                const wrap = button.closest(".share-wrap");
+                const open = wrap.querySelector(".share-menu");
+                closeShare();
+                if (open) return;
                 const url = shareUrl();
                 const text = `Bike route from ${state.trip?.start || "A"} to ${state.trip?.end || "B"}: the ${nameOf(route)} route, ${viaOf(route).toLowerCase()}, about ${Math.round(route.minutes)} minutes.`;
-                if (navigator.share && matchMedia("(pointer: coarse)").matches) {
-                    try { return await navigator.share({ title: "Ave A to B", text, url }); } catch (e) { return; }
-                }
-                const row = button.closest(".export");
-                const open = row.nextElementSibling?.classList.contains("share-menu");
-                row.parentElement.querySelectorAll(".share-menu").forEach((m) => m.remove());
-                if (open) return;
                 const mailto = `mailto:?subject=${encodeURIComponent("Bike route from Ave A to B")}&body=${encodeURIComponent(text + "\n\n" + url)}`;
-                const copy = el("button", { class: "btn small", type: "button", onclick: async (e) => {
-                    const b = e.currentTarget;
-                    try { await navigator.clipboard.writeText(url); b.textContent = "Link copied"; } catch (err) { b.textContent = url; }
-                } }, "Copy link");
-                row.after(el("div", { class: "share-menu" }, copy, el("a", { class: "btn small", href: mailto }, "Email a link")));
+                const item = (label, onclick, attrs = {}) => el(attrs.href ? "a" : "button", { class: "share-item", role: "menuitem", type: attrs.href ? null : "button", onclick, ...attrs }, label);
+                const items = [];
+                if (navigator.share && matchMedia("(pointer: coarse)").matches) {
+                    items.push(item("Share via…", async () => { closeShare(); try { await navigator.share({ title: "Ave A to B", text, url }); } catch (e) {} }));
+                }
+                items.push(item("Copy link", async (e) => {
+                    try { await navigator.clipboard.writeText(url); } catch (err) { prompt("Copy this link:", url); return closeShare(); }
+                    button.textContent = "Copied";
+                    closeShare();
+                    setTimeout(() => (button.textContent = "Share ▾"), 1600);
+                }));
+                items.push(item("Email a link", () => setTimeout(closeShare, 0), { href: mailto }));
+                wrap.append(el("div", { class: "share-menu", role: "menu" }, items));
+                button.setAttribute("aria-expanded", "true");
+                wrap.querySelector(".share-item").focus();
             }
+            document.addEventListener("pointerdown", (e) => !e.target.closest(".share-wrap") && closeShare());
+            document.addEventListener("keydown", (e) => e.key === "Escape" && closeShare());
 
             // --- Faster ↔ Safer slider ---
             // Slider position 0 to 100 maps onto λ piece by piece, so the three routes sit at evenly spread ticks
