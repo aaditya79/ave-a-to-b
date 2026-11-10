@@ -172,17 +172,118 @@ For each new lane (named by its street) and each Street Improvement Project fini
 
 ## 5. Sample queries
 
-The three queries below ran on the live site on November 9, 2026. The full traces, with every tool call and the agent that made it, are in [docs/traces.md](docs/traces.md). The no-tools answers came from the same model (`gemini-3.5-flash`) with no tools and no system prompt, only the question; they are in full in [docs/baselines.md](docs/baselines.md).
+The clearest test is Astoria to Times Square. Asked with no tools, the same model recommends riding Central Park South to Columbus Circle and calls that option "the safest and most scenic". In the crash data, one segment of Central Park South has 10 crashes since 2021 against about 2.9 expected on similar streets, the top stretch the agent flags. The agent recommends the Balanced route, which avoids that stretch: 1.7 minutes longer each way, about 61% lower crash risk than the fastest route.
 
-Every expected number below is recomputed from the Parquet files by a plain DuckDB query in [docs/expected_answers.md](docs/expected_answers.md), with no project code. `build/verify_samples.py` runs those queries and reports that all of them match the agent's answers. The segments of each route are in `docs/sample_routes.csv`.
+The four queries below ran on the live site on November 9, 2026. The full traces, with every tool call and the agent that made it, are in [docs/traces.md](docs/traces.md). The no-tools answers came from the same model (`gemini-3.5-flash`) with no tools and no system prompt, only the question; they are in full in [docs/baselines.md](docs/baselines.md).
 
-### Query 1: "I bike from Columbia University to Union Square, Manhattan around 8am. Which route should I take?"
+Every expected number below is recomputed from the Parquet files by a plain DuckDB query in [docs/expected_answers.md](docs/expected_answers.md), with no project code. `build/verify_samples.py` runs those queries and reports that all 7 checks match the agent's answers. The segments of each route are in `docs/sample_routes.csv`.
+
+### Query 1: "I bike from Astoria, Queens to Times Square. Which route should I take?"
+
+**Expected answer.** The Balanced route via 11th Street and West 55th Street, 33.7 minutes against 32.1 for the Fastest, with 61% lower risk (54% to 62%). The Lowest risk route via 30th Road and 28th Street (35.1 minutes, 62% lower) is about equally safe, because the ranges overlap, so the faster one wins. Two stretches stand out, led by Central Park South between nodes 42430394 and 4347534767 with 10 crashes (range 3.7 to 16.3) against about 2.9 on similar streets. It is on the Fastest route. All 5 projects on these routes are too sparse to compare.
+
+**Source.** `data/edges.parquet` (`travel_min`, `route_risk_*`, `crash_class_rate`, `mile_years`), `data/crash_locations.parquet`, `data/crashes.parquet`, `data/before_after.parquet`, and the rows for query 1 in `docs/sample_routes.csv`.
+
+| | Agent (47.6 s, 64 tool calls) | Same model, no tools (10.8 s) |
+|---|---|---|
+| Recommendation | Balanced route via 11th Street and West 55th Street | Crescent Street to the Queensboro Bridge, then 60th Street and Central Park South |
+| Time | 33.7 min, 1.7 more each way than Fastest | "30 to 45 minutes" |
+| Risk | 61% lower than Fastest (54% to 62%) | Calls its route "the safest and most scenic", with no numbers |
+| Stretches to watch | Central Park South (10 crashes against about 2.9 expected), 21st Street (5 against about 0.1) | None |
+| Before and after | All 5 projects too sparse | None |
+| Sources | A citation on every sentence | None |
+
+The no-tools answer recommends riding Central Park South. In the crash data it has 10 crashes since 2021 on one segment, against about 2.9 expected for similar streets, which is the top stretch the agent flags. The agent's recommended route avoids it.
+
+<details><summary>Full answers, agent and no-tools baseline</summary>
+
+#### Agent
+
+**Recommendation**
+
+**Take the Balanced route: 1.7 minutes longer each way, about 61% lower crash risk than the fastest route.**
+
+The Balanced route and the Lowest risk route are about equally safe. [route:3d2d166b; route:fdfc5019] The Balanced route (via 11th St and W 55th St) is recommended because it is faster. [route:3d2d166b] It uses 11th Street and West 55th Street, avoiding the busy 21st Street and Central Park South corridors. [route:3d2d166b; route:8f068dbc]
+
+**Time versus safety**
+
+| Route | Minutes | Extra minutes a day, round trip | Risk vs. Fastest (assumed; half to double) | Source |
+|---|---:|---:|---|---|
+| Fastest (via 7th Ave and 14th St) | 32.1 | 0.0 | baseline | [route:8f068dbc] |
+| Balanced (via 11th St and W 55th St) | 33.7 | 3.4 | 61% lower (54% lower to 62% lower) | [route:3d2d166b] |
+| Lowest risk (via 30th Rd and 28th St) | 35.1 | 6.2 | 62% lower (48% lower to 73% lower) | [route:fdfc5019] |
+
+Taking the Balanced route instead of the Fastest route adds 3.4 minutes to your daily round trip. [route:3d2d166b; route:8f068dbc] In exchange, it reduces your crash risk by about 61%, with lower risk at all assumed rider-share settings. [route:3d2d166b; route:8f068dbc]
+
+**Stretches that stand out**
+
+1. Central Park South: 10 crashes since 2021 (range 3.7 to 16.3), against about 2.9 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42430394-4347534767-0; collisions 2e678859c5e01d4406fa44622f081c7b, fb621a8c725eca79359f9864eaa7ced8, 4a47ee6b05937f54b5e259e673995b8f]
+2. 21st Street: 5 crashes since 2021 (range 0.5 to 9.5), against about 0.1 on similar streets. Main cause: Failure to Yield Right-of-Way. It stands out compared to similar streets. Watch out: Drivers here often fail to yield. At crossings, slow down and don't assume a turning car will stop. [edge 42825868-3569402143-0; collisions 5066b04df9bde7e2dd09f3282a5e3d98, 97e273792a552a09335c79f0b6a24259, 81322488bfa1b75f186c8a6dc359ce1a]
+
+**Bike lanes and redesigns**
+
+- All 5 projects on these routes had too few crashes to compare before and after.
+
+**Other findings**
+
+The Balanced route provides 3.24 miles of protected bike lanes compared to 2.82 miles on the Fastest route. [route:3d2d166b; route:8f068dbc] The main crash cause identified on these streets is driver inattention. [route:3d2d166b; route:fdfc5019]
+
+**Limits**
+
+- Police-reported crashes only, so this measures serious crash risk, not every incident.
+- Rider counts come from Citi Bike trips and a few city counters, so they don't cover every rider.
+- These are not personal odds. A change before and after a new lane doesn't prove the lane caused it.
+
+#### Same model, no tools
+
+Biking from Astoria to Times Square is a very popular and doable commute (roughly 5 to 6 miles, taking about 30–45 minutes depending on your pace). 
+
+The route is divided into three parts: getting out of Astoria, crossing the Queensboro Bridge, and navigating Manhattan. Here are the two best routes, depending on whether you prefer **safety/scenery** or **pure speed**.
+
+**Phase 1: Astoria to the Queensboro Bridge (The Queens Side)**
+No matter which Manhattan route you choose, this is the safest way to get to the bridge from Astoria:
+
+1. **Get to Crescent Street:** Crescent Street has a **dedicated, protected two-way bike lane** that runs all the way from Astoria Park down to the bridge. It is by far the safest north-south route in Astoria.
+2. **Take Crescent St South:** Ride south until you hit **43rd Avenue / Queens Plaza North**. 
+3. **Enter the Bridge:** Follow the green bike lane signs to transition onto the north outer roadway of the **Ed Koch Queensboro Bridge**. 
+
+*Note on the Bridge:* The bridge path is shared between cyclists and pedestrians. It is a steep climb, and you should watch out for fast-moving e-bikes and mopeds.
+
+**Option A: The Safest & Most Scenic Route (Recommended)**
+*This route utilizes protected bike lanes and enters Times Square via Columbus Circle. It is highly recommended if you want to avoid heavy midtown traffic.*
+
+* **Distance:** ~5.5 miles 
+* **The Route:**
+  1. **Exit the Queensboro Bridge** onto East 60th Street in Manhattan.
+  2. **Ride West on 60th Street:** Go straight west for five blocks. *Note: This stretch does not have a protected lane, so watch for car doors, but it is a relatively quiet crosstown street.*
+  3. **Reach Central Park / Fifth Ave:** Once you hit 5th Avenue, you can ride along Central Park South (59th St) to **Columbus Circle**.
+  4. **Take Broadway South:** At Columbus Circle, turn left onto **Broadway**. Broadway has a dedicated, protected green bike lane that runs south directly into the heart of Times Square (47th to 42nd Streets).
+
+**Option B: The Fastest Commuter Route**
+*This route is slightly shorter and more direct, but it requires riding on 40th Street, which has a painted (but not physically protected) bike lane and more traffic.*
+
+* **Distance:** ~5.0 miles
+* **The Route:**
+  1. **Exit the Queensboro Bridge** and immediately turn left (south) onto the **2nd Avenue protected bike lane**.
+  2. **Ride South to 40th Street:** Take the 2nd Ave bike lane down to 40th St.
+  3. **Turn Right (West) onto 40th Street:** 40th St has a westbound painted bike lane. Ride west past Grand Central and Bryant Park.
+  4. **Arrive at Times Square:** Turn right (north) onto **Broadway or 7th Avenue** to enter Times Square.
+
+**Important Tips for Biking to Times Square:**
+* **The "Dismount" Zones:** Once you reach Times Square (Broadway/7th Ave between 47th and 42nd Sts), it becomes a pedestrian plaza. **You are legally required to dismount and walk your bike** in these pedestrian-only plazas. 
+* **Watch for E-mopeds on the Bridge:** The Queensboro Bridge path can feel narrow and crowded. Keep to the right and stay alert.
+* **Bike Parking:** Times Square is a high-theft area. If you are using your own bike, lock it with a heavy-duty U-lock (preferably two) in a highly visible area, or use an indoor parking garage if your office offers one. 
+* **Citi Bike:** If you don't want to worry about locking up your bike, there are dozens of Citi Bike docks in Astoria and all around Times Square.
+
+</details>
+
+### Query 2: "I bike from Columbia University to Union Square, Manhattan around 8am. Which route should I take?"
 
 **Expected answer.** The Balanced route via Columbus Avenue and West Drive, 39.0 minutes against 35.5 for the Fastest. Its risk is 62% lower than the Fastest route's at the assumed setting (47% to 70% across the three settings). The Lowest risk route (42.2 minutes, 69% lower) is about equally safe, because the two routes' ranges overlap, so the faster one wins. Three stretches stand out, led by 7th Avenue between nodes 42439952 and 42439955 with 7 crashes (range 1.7 to 12.3) against about 1.4 on similar streets. That stretch is on the Balanced and Lowest risk routes, so the recommended route is lower risk overall but still passes one stretch that stands out. The other two stretches are on the Fastest route. The protected lane on 7th Avenue (2022): crashes fell from 14.2 to 9.4 a year while similar streets stayed near 3.7, within normal swings.
 
-**Source.** `data/edges.parquet` (`travel_min`, `route_risk_*`, `crash_class_rate`, `mile_years`), `data/crash_locations.parquet`, `data/crashes.parquet`, `data/before_after.parquet`, and `docs/sample_routes.csv`.
+**Source.** The same files as Query 1, rows for query 2 in `docs/sample_routes.csv`.
 
-| | Agent (80.6 s, 52 tool calls) | Same model, no tools (12.5 s) |
+| | Agent (86.3 s, 49 tool calls) | Same model, no tools (12.5 s) |
 |---|---|---|
 | Recommendation | Balanced route via Columbus Avenue and West Drive. About equally safe as Lowest risk, and faster | Columbus Avenue to 8th Avenue, then 14th Street |
 | Time | 39.0 min, 3.5 more each way than Fastest | "30 to 40 minutes" |
@@ -197,23 +298,25 @@ Every expected number below is recomputed from the Parquet files by a plain Duck
 
 **Recommendation**
 
-Take the Balanced route via Columbus Avenue and West Drive. [route:efad97ec] It adds 3.5 minutes each way and has about 62% lower estimated crash risk than the Fastest route. [route:efad97ec] The Balanced route and the Lowest risk route are about equally safe, so the Balanced route is recommended because it is faster. [route:efad97ec; route:ad47258d]
+**Take the Balanced route: 3.5 minutes longer each way, about 62% lower crash risk than the fastest route.**
+
+The Balanced route and the Lowest risk route are about equally safe, so we recommend the Balanced route because it is faster. [route:efad97ec; route:ad47258d] The Balanced route uses protected lanes on Columbus Ave and West Drive through Central Park, skipping the mostly unprotected Broadway. [route:efad97ec; route:aa2ae5ab]
 
 **Time versus safety**
 
 | Route | Minutes | Extra minutes a day, round trip | Risk vs. Fastest (assumed; half to double) | Source |
 |---|---:|---:|---|---|
-| Fastest (via 5th Avenue and East 20th Street) | 35.5 | 0.0 | baseline | [route:aa2ae5ab] |
-| Balanced (via Columbus Avenue and West Drive) | 39.0 | 7.0 | 62% lower (47% lower to 70% lower) | [route:efad97ec] |
-| Lowest risk (via West 20th Street and West Drive) | 42.2 | 13.6 | 69% lower (58% lower to 75% lower) | [route:ad47258d] |
+| Fastest (via 5th Ave and E 20th St) | 35.5 | 0.0 | baseline | [route:aa2ae5ab] |
+| Balanced (via Columbus Ave and Central Park) | 39.0 | 7.0 | 62% lower (47% lower to 70% lower) | [route:efad97ec] |
+| Lowest risk (via W 20th St and Central Park) | 42.2 | 13.6 | 69% lower (58% lower to 75% lower) | [route:ad47258d] |
 
-Choosing the Balanced route adds 7.0 minutes of travel time per day compared to the Fastest route. [route:efad97ec] In exchange, it reduces estimated crash risk by about 62%. [route:efad97ec] Estimated risk is also lower at the half and double settings. [route:efad97ec]
+Taking the Balanced route adds 7 minutes to your daily round trip. [route:efad97ec; route:aa2ae5ab] However, it lowers your crash risk by an estimated 62% compared to the Fastest route, with lower risk across all analyzed assumptions. [route:efad97ec]
 
 **Stretches that stand out**
 
-1. 7th Avenue: 7 crashes since 2021 (range 1.7 to 12.3), against about 1.4 on similar streets. Main cause: Traffic Control Disregarded. It stands out compared to similar streets. [edge 42439952-42439955-0; collisions 628498aae7b24fe266df5356047b86bd, 63eb93345b611af174a6c0bffdf0c4f4, 2177de055e285dbd9f0dc6040b659f6c]
-2. 5th Avenue: 6 crashes since 2021 (range 1.1 to 10.9), against about 1.0 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. [edge 42437644-42446701-0; collisions a296c9bbd01ad010d10126133e72b2a2, 1b9b7245944e4112c3bce9e29065895c, 31daf61468598b9c88d2e24612d1e4c6]
-3. West 34th Street: 5 crashes since 2021 (range 0.5 to 9.5), against about 0.2 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. [edge 42430304-4886228959-0; collisions 5ca0debdc7b3de96b8176b0cec4c99bb, fdd5e0d17158216b5c1d52c66491d7a2, 0843c2a0303c144df842cf183b4c7c60]
+1. 7th Avenue: 7 crashes since 2021 (range 1.7 to 12.3), against about 1.4 on similar streets. Main cause: Traffic Control Disregarded. It stands out compared to similar streets. Watch out: Drivers here have run lights and signs. Check cross traffic before you go, even on a green. [edge 42439952-42439955-0; collisions 628498aae7b24fe266df5356047b86bd, 63eb93345b611af174a6c0bffdf0c4f4, 2177de055e285dbd9f0dc6040b659f6c]
+2. 5th Avenue: 6 crashes since 2021 (range 1.1 to 10.9), against about 1.0 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42437644-42446701-0; collisions a296c9bbd01ad010d10126133e72b2a2, 1b9b7245944e4112c3bce9e29065895c, 31daf61468598b9c88d2e24612d1e4c6]
+3. West 34th Street: 5 crashes since 2021 (range 0.5 to 9.5), against about 0.2 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42430304-4886228959-0; collisions 5ca0debdc7b3de96b8176b0cec4c99bb, fdd5e0d17158216b5c1d52c66491d7a2, 0843c2a0303c144df842cf183b4c7c60]
 
 **Bike lanes and redesigns**
 
@@ -223,7 +326,7 @@ Choosing the Balanced route adds 7.0 minutes of travel time per day compared to 
 
 **Other findings**
 
-Between 7am and 10am, there were 10 crashes on the Balanced route. [route:efad97ec] The Balanced route features 4.43 miles of protected lanes, while the Fastest route has only 1.12 miles. [route:efad97ec; route:aa2ae5ab] There were 467 blocked-bike-lane complaints on the Balanced route. [route:efad97ec]
+During your morning commute window, the main crash causes along the Balanced route are driver inattention and pedestrian error. [route:efad97ec] The Balanced route has 4.43 miles of protected bike lanes compared to only 1.12 miles on the Fastest route. [route:efad97ec; route:aa2ae5ab]
 
 **Limits**
 
@@ -287,13 +390,13 @@ Here are the three best routes, depending on what kind of rider you are.
 
 </details>
 
-### Query 2: "I bike from Prospect Heights, Brooklyn to DUMBO, Brooklyn in the evening, around 6pm. Which route should I take?"
+### Query 3: "I bike from Prospect Heights, Brooklyn to DUMBO, Brooklyn in the evening, around 6pm. Which route should I take?"
 
 **Expected answer.** The Balanced route via Carlton Avenue and Flushing Avenue, which is also the Lowest risk route. It is the safest of these three routes: at the assumed setting its range (4.0 to 8.6) sits wholly below the Fastest route's (14.8 to 26.2), and it wins at all three settings. It takes 17.7 minutes against 15.5, with 69% lower risk (51% to 90%). Four stretches stand out, all on the Fastest route, led by Flatbush Avenue between nodes 42469253 and 42491599 with 9 crashes (range 3.0 to 15.0) against about 0.6 on similar streets. All 4 projects on these routes have too few crashes for a before and after comparison.
 
-**Source.** The same files as Query 1, rows for query 2 in `docs/sample_routes.csv`.
+**Source.** The same files as Query 1, rows for query 3 in `docs/sample_routes.csv`.
 
-| | Agent (66.8 s, 32 tool calls) | Same model, no tools (16.0 s) |
+| | Agent (61.9 s, 35 tool calls) | Same model, no tools (16.0 s) |
 |---|---|---|
 | Recommendation | Balanced route via Carlton Avenue and Flushing Avenue, the safest of these three routes | Vanderbilt Avenue to the Flushing Avenue path and Sands Street |
 | Time | 17.7 min, 2.2 more each way than Fastest | "about 15 to 20 minutes" |
@@ -310,23 +413,25 @@ Both answers avoid Flatbush Avenue and use the protected lane on Flushing Avenue
 
 **Recommendation**
 
-Take the Balanced route via Carlton Avenue and Flushing Avenue. It adds 2.2 minutes each way and has about 69% lower estimated crash risk than the Fastest route. [route:d8e2391c] This route is the safest of these three routes. [route:d8e2391c]
+**Take the Balanced route: 2.2 minutes longer each way, about 69% lower crash risk than the fastest route.**
+
+The Balanced route is the safest of these three routes because it avoids the high-volume car traffic on Flatbush Avenue. [route:d8e2391c; route:9d380b0b]
 
 **Time versus safety**
 
 | Route | Minutes | Extra minutes a day, round trip | Risk vs. Fastest (assumed; half to double) | Source |
 |---|---:|---:|---|---|
-| Fastest (via Flatbush Avenue Extension and Flatbush Avenue) | 15.5 | 0.0 | baseline | [route:9d380b0b] |
-| Balanced / Lowest risk (via Carlton Avenue and Flushing Avenue) | 17.7 | 4.4 | 69% lower (51% lower to 90% lower) | [route:d8e2391c] |
+| Fastest (via Flatbush Ave Ext and Flatbush Ave) | 15.5 | 0.0 | baseline | [route:9d380b0b] |
+| Balanced / Lowest risk (via Carlton Ave and Flushing Ave) | 17.7 | 4.4 | 69% lower (51% lower to 90% lower) | [route:d8e2391c] |
 
-Choosing the safer option adds 4.4 minutes to your daily round trip. [route:d8e2391c] Your estimated crash risk remains lower on this route at the half and double settings too. [route:d8e2391c]
+Taking this safer route adds 4.4 minutes per day to your round trip. [route:d8e2391c] Your crash risk is lower on this route at the half and double rider-share settings too. [route:d8e2391c]
 
 **Stretches that stand out**
 
-1. Flatbush Avenue: 9 crashes since 2021 (range 3.0 to 15.0), against about 0.6 on similar streets. Main cause: Failure to Yield Right-of-Way. It stands out compared to similar streets. [edge 42469253-42491599-0; collisions b2d3cd65a1168c8740f9f5cb4478931d, 5c65939a21daf40bf0ad22636f74e66b, af56a29743f5e911d6542917d0d78db8]
-2. Flatbush Avenue: 8 crashes since 2021 (range 2.3 to 13.7), against about 1.0 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. [edge 42473595-42491632-0; collisions cb9c5f57dc6d0a3622cbde8b61892398, 5188dbe53e8d7559277cab67e301ac5e, d8a7fa65d1e4af19ff33cf738c1cb590]
-3. Jay Street: 7 crashes since 2021 (range 1.7 to 12.3), against about 1.2 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. [edge 42482552-6324352259-0; collisions 9f028c39e2c364014381373523b14dbf, ef2abb45edce3e8775c0ea0a43d604bc, 719e7e52268a6a71f610dbdeac3bd429]
-4. Flatbush Avenue: 6 crashes since 2021 (range 1.1 to 10.9), against about 0.8 on similar streets. Main cause: Passing Too Closely. It stands out compared to similar streets. [edge 42491613-1372888639-0; collisions 4c5bd51f474ac788e9e2e8aec25649f3, 6b680db149470a1ed9b663be085fe260, 94880365a83e616da4754442d140d6ae]
+1. Flatbush Avenue: 9 crashes since 2021 (range 3.0 to 15.0), against about 0.6 on similar streets. Main cause: Failure to Yield Right-of-Way. It stands out compared to similar streets. Watch out: Drivers here often fail to yield. At crossings, slow down and don't assume a turning car will stop. [edge 42469253-42491599-0; collisions b2d3cd65a1168c8740f9f5cb4478931d, 5c65939a21daf40bf0ad22636f74e66b, af56a29743f5e911d6542917d0d78db8]
+2. Flatbush Avenue: 8 crashes since 2021 (range 2.3 to 13.7), against about 1.0 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42473595-42491632-0; collisions cb9c5f57dc6d0a3622cbde8b61892398, 5188dbe53e8d7559277cab67e301ac5e, d8a7fa65d1e4af19ff33cf738c1cb590]
+3. Jay Street: 7 crashes since 2021 (range 1.7 to 12.3), against about 1.2 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. Watch out: Distracted driving is the most common cause here. Be visible, use lights, and leave room to stop. [edge 42482552-6324352259-0; collisions 9f028c39e2c364014381373523b14dbf, ef2abb45edce3e8775c0ea0a43d604bc, 719e7e52268a6a71f610dbdeac3bd429]
+4. Flatbush Avenue: 6 crashes since 2021 (range 1.1 to 10.9), against about 0.8 on similar streets. Main cause: Passing Too Closely. It stands out compared to similar streets. Watch out: Vehicles here pass too closely or use the lane badly. Hold a steady line and take the lane when it's too narrow to share. [edge 42491613-1372888639-0; collisions 4c5bd51f474ac788e9e2e8aec25649f3, 6b680db149470a1ed9b663be085fe260, 94880365a83e616da4754442d140d6ae]
 
 **Bike lanes and redesigns**
 
@@ -334,7 +439,7 @@ Choosing the safer option adds 4.4 minutes to your daily round trip. [route:d8e2
 
 **Other findings**
 
-Around 6pm, the Fastest route recorded 20 crashes compared to 8 on the Balanced route. [route:9d380b0b; route:d8e2391c] The main evening crash causes include driver inattention and failure to yield. [route:9d380b0b] The Balanced route features 0.88 miles of protected lanes, while the Fastest route has only 0.19 miles of protected lanes. [route:9d380b0b; route:d8e2391c]
+The Fastest route has 1.77 miles without bike lanes and 2.18 truck route miles. [route:9d380b0b] The Balanced route features 0.88 miles of protected lanes, but received 2,479 blocked-bike-lane complaints. [route:d8e2391c] Between 5:00 PM and 8:00 PM, the Fastest route recorded 20 crashes. [route:9d380b0b]
 
 **Limits**
 
@@ -386,102 +491,17 @@ At 6:00 PM, Downtown Brooklyn is chaotic with commuters and delivery drivers. To
 
 </details>
 
-### Query 3: "I bike from Astoria, Queens to Times Square. Which route should I take?"
+### Query 4: "Is biking in Brooklyn safe?"
 
-**Expected answer.** The Balanced route via 11th Street and West 55th Street, 33.7 minutes against 32.1 for the Fastest, with 61% lower risk (54% to 62%). The Lowest risk route via 30th Road and 28th Street (35.1 minutes, 62% lower) is about equally safe, because the ranges overlap, so the faster one wins. Two stretches stand out, led by Central Park South between nodes 42430394 and 4347534767 with 10 crashes (range 3.7 to 16.3) against about 2.9 on similar streets. It is on the Fastest route. All 5 projects on these routes are too sparse to compare.
+This question names no trip, so it tests the clarification step. The Lead called `area_summary` once (3.3 s, 1 tool call), the page showed the borough numbers from code, and the Lead asked one clarifying question with example trips to tap. No Writer or Verifier ran. The trace is in [docs/traces.md](docs/traces.md#is-biking-in-brooklyn-safe).
 
-**Source.** The same files as Query 1, rows for query 3 in `docs/sample_routes.csv`.
+> Biking in Brooklyn: 1.09 crashes that hurt a cyclist per mile of street per year since 2021, 61% higher than the citywide 0.68. 8% of its 1,940 street miles have protected lanes or paths, and 8% have painted lanes. A lower crash rate per mile can partly reflect fewer people riding there, not only safer streets. Rider counts are thin outside Manhattan, so risk per rider can't be compared between boroughs. Corridors that stand out compared to similar streets: Bedford Avenue (365 crashes against about 198.8 expected); 5th Avenue (260 crashes against about 107.3 expected); Fulton Street (218 crashes against about 76.3 expected).
+>
+> I can also compare routes for a specific trip. Where are you starting and ending your ride in Brooklyn, and what time of day will you be riding?
 
-| | Agent (48.1 s, 64 tool calls) | Same model, no tools (10.8 s) |
-|---|---|---|
-| Recommendation | Balanced route via 11th Street and West 55th Street | Crescent Street to the Queensboro Bridge, then 60th Street and Central Park South |
-| Time | 33.7 min, 1.7 more each way than Fastest | "30 to 45 minutes" |
-| Risk | 61% lower than Fastest (54% to 62%) | Calls its route "the safest and most scenic", with no numbers |
-| Stretches to watch | Central Park South (10 crashes against about 2.9 expected), 21st Street (5 against about 0.1) | None |
-| Before and after | All 5 projects too sparse | None |
-| Sources | A citation on every sentence | None |
+Quick replies offered: "From Park Slope to DUMBO, around 8am", "From Williamsburg to Downtown Brooklyn, around 9am", "From Crown Heights to Bushwick, around 6pm".
 
-The no-tools answer recommends riding Central Park South. In the crash data it has 10 crashes since 2021 on one segment, against about 2.9 expected for similar streets, which is the top stretch the agent flags. The agent's recommended route avoids it.
-
-<details><summary>Full answers, agent and no-tools baseline</summary>
-
-#### Agent
-
-**Recommendation**
-
-The Balanced route via 11th Street and West 55th Street and the Lowest risk route via 30th Road and 28th Street are about equally safe. [route:3d2d166b; route:fdfc5019] Take the Balanced route via 11th Street and West 55th Street because it is faster. [route:3d2d166b]
-
-**Time versus safety**
-
-| Route | Minutes | Extra minutes a day, round trip | Risk vs. Fastest (assumed; half to double) | Source |
-|---|---:|---:|---|---|
-| Fastest (via 7th Avenue and 14th Street) | 32.1 | 0.0 | baseline | [route:8f068dbc] |
-| Balanced (via 11th Street and West 55th Street) | 33.7 | 3.4 | 61% lower (54% lower to 62% lower) | [route:3d2d166b] |
-| Lowest risk (via 30th Road and 28th Street) | 35.1 | 6.2 | 62% lower (48% lower to 73% lower) | [route:fdfc5019] |
-
-Taking this route adds 3.4 extra minutes per day for a round trip compared to the Fastest route. [route:3d2d166b; route:8f068dbc] It has about 61% lower estimated crash risk than the Fastest route under the assumed setting, with lower risk at other settings too. [route:3d2d166b; route:8f068dbc]
-
-**Stretches that stand out**
-
-1. Central Park South: 10 crashes since 2021 (range 3.7 to 16.3), against about 2.9 on similar streets. Main cause: Driver Inattention/Distraction. It stands out compared to similar streets. [edge 42430394-4347534767-0; collisions 2e678859c5e01d4406fa44622f081c7b, fb621a8c725eca79359f9864eaa7ced8, 4a47ee6b05937f54b5e259e673995b8f]
-2. 21st Street: 5 crashes since 2021 (range 0.5 to 9.5), against about 0.1 on similar streets. Main cause: Failure to Yield Right-of-Way. It stands out compared to similar streets. [edge 42825868-3569402143-0; collisions 5066b04df9bde7e2dd09f3282a5e3d98, 97e273792a552a09335c79f0b6a24259, 81322488bfa1b75f186c8a6dc359ce1a]
-
-**Bike lanes and redesigns**
-
-- All 5 projects on these routes had too few crashes to compare before and after.
-
-**Other findings**
-
-The Balanced route has 3.24 miles on protected lanes and experienced 39 crashes over 5 years. [route:3d2d166b] The Fastest route features 75 crashes, with driver inattention being a primary cause at standout stretches. [route:8f068dbc]
-
-**Limits**
-
-- Police-reported crashes only, so this measures serious crash risk, not every incident.
-- Rider counts come from Citi Bike trips and a few city counters, so they don't cover every rider.
-- These are not personal odds. A change before and after a new lane doesn't prove the lane caused it.
-
-#### Same model, no tools
-
-Biking from Astoria to Times Square is a very popular and doable commute (roughly 5 to 6 miles, taking about 30–45 minutes depending on your pace). 
-
-The route is divided into three parts: getting out of Astoria, crossing the Queensboro Bridge, and navigating Manhattan. Here are the two best routes, depending on whether you prefer **safety/scenery** or **pure speed**.
-
-**Phase 1: Astoria to the Queensboro Bridge (The Queens Side)**
-No matter which Manhattan route you choose, this is the safest way to get to the bridge from Astoria:
-
-1. **Get to Crescent Street:** Crescent Street has a **dedicated, protected two-way bike lane** that runs all the way from Astoria Park down to the bridge. It is by far the safest north-south route in Astoria.
-2. **Take Crescent St South:** Ride south until you hit **43rd Avenue / Queens Plaza North**. 
-3. **Enter the Bridge:** Follow the green bike lane signs to transition onto the north outer roadway of the **Ed Koch Queensboro Bridge**. 
-
-*Note on the Bridge:* The bridge path is shared between cyclists and pedestrians. It is a steep climb, and you should watch out for fast-moving e-bikes and mopeds.
-
-**Option A: The Safest & Most Scenic Route (Recommended)**
-*This route utilizes protected bike lanes and enters Times Square via Columbus Circle. It is highly recommended if you want to avoid heavy midtown traffic.*
-
-* **Distance:** ~5.5 miles 
-* **The Route:**
-  1. **Exit the Queensboro Bridge** onto East 60th Street in Manhattan.
-  2. **Ride West on 60th Street:** Go straight west for five blocks. *Note: This stretch does not have a protected lane, so watch for car doors, but it is a relatively quiet crosstown street.*
-  3. **Reach Central Park / Fifth Ave:** Once you hit 5th Avenue, you can ride along Central Park South (59th St) to **Columbus Circle**.
-  4. **Take Broadway South:** At Columbus Circle, turn left onto **Broadway**. Broadway has a dedicated, protected green bike lane that runs south directly into the heart of Times Square (47th to 42nd Streets).
-
-**Option B: The Fastest Commuter Route**
-*This route is slightly shorter and more direct, but it requires riding on 40th Street, which has a painted (but not physically protected) bike lane and more traffic.*
-
-* **Distance:** ~5.0 miles
-* **The Route:**
-  1. **Exit the Queensboro Bridge** and immediately turn left (south) onto the **2nd Avenue protected bike lane**.
-  2. **Ride South to 40th Street:** Take the 2nd Ave bike lane down to 40th St.
-  3. **Turn Right (West) onto 40th Street:** 40th St has a westbound painted bike lane. Ride west past Grand Central and Bryant Park.
-  4. **Arrive at Times Square:** Turn right (north) onto **Broadway or 7th Avenue** to enter Times Square.
-
-**Important Tips for Biking to Times Square:**
-* **The "Dismount" Zones:** Once you reach Times Square (Broadway/7th Ave between 47th and 42nd Sts), it becomes a pedestrian plaza. **You are legally required to dismount and walk your bike** in these pedestrian-only plazas. 
-* **Watch for E-mopeds on the Bridge:** The Queensboro Bridge path can feel narrow and crowded. Keep to the right and stay alert.
-* **Bike Parking:** Times Square is a high-theft area. If you are using your own bike, lock it with a heavy-duty U-lock (preferably two) in a highly visible area, or use an indoor parking garage if your office offers one. 
-* **Citi Bike:** If you don't want to worry about locking up your bike, there are dozens of Citi Bike docks in Astoria and all around Times Square.
-
-</details>
+Tapping one sends it with the earlier question and the Lead's question, so the Lead continues the same task and compares routes for that trip.
 
 ## 6. Running it
 

@@ -156,6 +156,7 @@ def main():
                 ok = item["check"](database.sql(item["sql"]).df())
                 failures += not ok
                 status = " Recomputed by the query: matches." if ok else " Recomputed by the query: DOES NOT MATCH."
+                print(f"Query {number} | {'match   ' if ok else 'MISMATCH'} | {item['what']}")
             lines += [f"**{item['what']}**\n", f"- Agent's answer: {item['expected']}.{status}", f"- Source: {item['files']}\n",
                       "```sql", item["sql"], "```\n"]
     (DOCS / "expected_answers.md").write_text("\n".join(lines))
