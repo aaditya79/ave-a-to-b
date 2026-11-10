@@ -62,7 +62,9 @@ class Research:
     rounds: int = 0
     routes: dict | None = None  # route_options' full result, with the map lines
     findings: list[dict] = field(default_factory=list)
-    unchecked: list[str] = field(default_factory=list)  # tasks a Researcher returned nothing for, even after a retry
+    unchecked: list[str] = field(default_factory=list)
+    distances: list[dict] = field(default_factory=list)  # each pair route_options found: fastest miles and minutes
+    outside: list[str] = field(default_factory=list)  # places route_options found outside NYC  # tasks a Researcher returned nothing for, even after a retry
 
 
 # --- Tools the agents call. Each returns JSON text; map-only fields stay out of the model's context. ---
@@ -100,14 +102,26 @@ def route_options(ctx: RunContextWrapper[Research], start: str, end: str) -> str
         start: Where the trip starts: an address, intersection, or place name, with the borough.
         end: Where the trip ends, the same way.
     """
+    return as_text(for_the_model(find_routes(ctx.context, start, end)))
+
+
+def find_routes(run: "Research", start: str, end: str) -> dict:
+    """route_options, plus what the run keeps from it: the routes for the map, each pair's distance, and any
+    place outside NYC."""
+    ctx = type("Ctx", (), {"context": run})
     result = tools.route_options(start, end)
+    if result.get("outside"):
+        ctx.context.outside.append(result["outside"])
     if "routes" in result:
+        fastest = result["routes"]["fastest"]
+        ctx.context.distances.append({"start": result["start"]["label"], "end": result["end"]["label"],
+                                      "miles": fastest["miles"], "minutes": fastest["minutes"]})
         ctx.context.routes = result
         ctx.context.hooks.emit({"type": "routes", "data": map_routes(result)})  # draw the map before research ends
         every = {e for ids in route_edges(result).values() for e in ids}
         ctx.context.hooks.emit({"type": "progress", "step": "routes", "segments": len(every),
                                 "routes": len({r["route_ref"] for r in result["routes"].values()})})
-    return as_text(for_the_model(result))
+    return result
 
 
 def crash_summary(where: str, year_from: int = 2021, year_to: int = 2026, severe_only: bool = False,
@@ -319,6 +333,8 @@ call tools other than yours. Never give personal odds, legal or medical advice, 
 person. If the message isn't about biking in New York City, its streets and crash data, or how this app
 works, reply with exactly one line and call no tools:
    OFF_TOPIC: <one polite sentence saying you only help with NYC bike routes and street safety>
+A message that names two or more places (neighborhoods, landmarks, airports such as LGA, JFK, or EWR, stations,
+addresses) is never off-topic: it is a trip or distance question, even if it doesn't mention bikes.
 
 1. Classify the rider's latest message first. The message decides the task, not the form:
    - FOLLOW-UP: it answers your earlier clarifying question (a place, a time, a tapped example trip). Continue
@@ -332,6 +348,12 @@ works, reply with exactly one line and call no tools:
      is about that trip or names no other place ("Which way is safer in the morning?"). If the message names
      its own places, those win. A start, an end, or a time from the message, the conversation, or the form
      counts: never ask again for something already given.
+   - DISTANCE question: asks how far, how long, or which is closer between places, such as "How far is
+     Columbia from Union Square by bike?" or "Is LGA closer to JFK than Newark?". In ONE turn, call route_options
+     for each pair the question compares (for the second example: LGA to JFK, and LGA to Newark). A place
+     outside New York City comes back as outside: never guess a distance for it. Then reply DISTANCE and nothing
+     else. Code writes the answer from those results. Never say whether bikes are allowed on a road, such as
+     an airport road, unless a tool result says so.
    Both a start and an end known: go to step 2. Otherwise reply with the two lines below, asking only for
    what is missing.
    The two lines:
@@ -580,6 +602,22 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
         lead_said = str(result.final_output).strip()
     except asyncio.TimeoutError:
         lead_said = "DONE"  # out of time: write with what came back
+    named = tools.places_in(question.rsplit("Their latest message: ", 1)[-1])
+    if lead_said.startswith("OFF_TOPIC:") and len(named) >= 2:
+        # Names two or more places: a trip or distance question, so give the Lead one more try with that said
+        hooks.handoff("Lead", "Lead", "gap", f"Sent it back to the Lead because the message names {' and '.join(named)}, "
+                      "so it is a trip or distance question, not off-topic.")
+        nudge = (f"{question}\n\nNote from code: this message names {', '.join(named)}. It is a DISTANCE or ROUTE "
+                 "question, not off-topic. Follow step 1 for it.")
+        try:
+            result = await asyncio.wait_for(Runner.run(lead, nudge, context=run, hooks=hooks, max_turns=10), RESEARCH_SECONDS)
+            lead_said = str(result.final_output).strip()
+        except asyncio.TimeoutError:
+            lead_said = "DONE"
+    if lead_said.startswith("DISTANCE") or (run.outside and not run.routes):
+        reply = distance_answer(run)
+        hooks.handoff("Lead", "Rider", "clarify", reply["response"])
+        return reply
     if lead_said.startswith("OFF_TOPIC:"):
         refusal = declined(lead_said.removeprefix("OFF_TOPIC:").strip() + f" You could ask, for example, \"{SUGGESTIONS[0]}\".")
         hooks.handoff("Lead", "Rider", "declined", refusal["response"])
@@ -828,6 +866,34 @@ def render_markdown(written: Answer, map_: dict, unverified: list[str] | None, u
     return "\n\n".join(parts)
 
 
+AIRPORT = re.compile(r"airport|\b(lga|jfk|ewr)\b", re.I)
+
+
+def distance_answer(run: Research) -> dict:
+    """A trip or distance question: bike miles and minutes on the fastest route for each pair, written in
+    code, a plain note for places outside NYC, and the full comparison offered as a quick reply."""
+    seen, lines, options = set(), [], []
+    for d in run.distances:
+        if (d["start"], d["end"]) in seen:
+            continue
+        seen.add((d["start"], d["end"]))
+        lines.append(f"By bike, {d['start']} to {d['end']} is {d['miles']:.1f} miles on the fastest route, "
+                     f"about {round(d['minutes'])} minutes.")
+        options.append(f"From {d['start']} to {d['end']}")
+    for place in dict.fromkeys(run.outside):
+        lines.append(f"{place} is outside New York City, so it isn't in our street and crash data, and I can't give a bike "
+                     "distance to it or compare it.")
+    if any(AIRPORT.search(x) for d in run.distances for x in (d["start"], d["end"])):
+        lines.append("These routes follow the streets in our bike network. That doesn't tell you whether bikes are "
+                     "allowed on every airport road.")
+    if options:
+        lines.append("I can also compare three routes by crash risk for that trip. Tap it below.")
+    else:
+        lines.append(f"Ask about a trip inside the five boroughs, for example \"{SUGGESTIONS[0]}\".")
+    return {"response": " ".join(lines), "clarify": True, "options": options[:3], "answer": None, "map": None,
+            "distance": {"pairs": [d for d in run.distances], "outside": list(dict.fromkeys(run.outside))}}
+
+
 def unchecked_note(parts: list[str]) -> str:
     return ("**Couldn't check:** a researcher returned no findings, even after a retry, so this answer leaves out "
             + "; ".join(parts) + ".")
@@ -960,7 +1026,8 @@ async def chat(request: ChatRequest, http: Request):
         result = {"response": f"Something went wrong on our side ({type(e).__name__}: {str(e)[:300]}). Please try again."}
     return {"response": result["response"], "session_id": session_id, "tool_calls": hooks.tool_calls,
             "answer": result.get("answer"), "clarify": result.get("clarify", False), "options": result.get("options", []),
-            "map": result.get("map"), "area": result.get("area"), "declined": result.get("declined", False), "verification": result.get("verification"),
+            "map": result.get("map"), "area": result.get("area"), "distance": result.get("distance"), "declined": result.get("declined", False),
+            "unchecked_parts": result.get("unchecked_parts", []), "verification": result.get("verification"),
             "handoffs": hooks.handoffs}
 
 

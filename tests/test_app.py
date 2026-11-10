@@ -411,3 +411,61 @@ def test_similar_counts_cover_the_route_classes():
 def test_numbers_in_a_draft_are_counted_without_citations():
     draft = "Take the Balanced route: 1.7 minutes longer, about 61% lower risk. [route:abc; edge 42430394-4347534767-0] 10 crashes."
     assert app.NUMBER.findall(app.CITED.sub("", draft)) == ["1.7", "61%", "10"]
+
+
+# --- Near-topic: a question that names places is a trip or distance question ---
+
+def DistanceLead(monkeypatch, pairs, first_reply="DISTANCE"):
+    """A Lead that calls route_options for each pair, then replies (OFF_TOPIC first, if asked, to test the net)."""
+    replies = iter([first_reply, "DISTANCE"])
+
+    async def run(agent, text, context=None, hooks=None, max_turns=None):
+        reply = next(replies)
+        if reply == "DISTANCE":
+            for start, end in pairs:
+                app.find_routes(context, start, end)
+        return type("Result", (), {"final_output": reply})()
+    monkeypatch.setattr(app.Runner, "run", run)
+
+
+def test_airport_question_gives_the_nyc_distance_and_says_newark_is_outside(monkeypatch):
+    DistanceLead(monkeypatch, [("LGA", "JFK"), ("LGA", "Newark")])
+    reply = client.post("/chat", json={"message": "Is LGA closer to JFK than Newark?"}).json()
+    text = reply["response"]
+    assert "LaGuardia Airport, Queens to JFK Airport, Queens is 13.2 miles" in text or "is 13.3 miles" in text
+    assert "Newark is outside New York City" in text and "isn't in our street and crash data" in text
+    assert "allowed on every airport road" in text and "bikes are allowed on" not in text.replace("whether bikes are allowed on", "")
+    assert reply["options"] == ["From LaGuardia Airport, Queens to JFK Airport, Queens"] and not reply.get("declined")
+
+
+def test_off_topic_on_a_message_naming_places_gets_one_more_try(monkeypatch):
+    DistanceLead(monkeypatch, [("LGA", "JFK"), ("LGA", "Newark")], first_reply="OFF_TOPIC: I only help with NYC bike routes.")
+    reply = client.post("/chat", json={"message": "Is LGA closer to JFK than Newark?"}).json()
+    assert not reply.get("declined") and "miles on the fastest route" in reply["response"]
+    assert any("names LaGuardia Airport and JFK Airport and Newark" in h["text"] for h in reply["handoffs"])
+
+
+def test_how_far_question_answers_with_distance(monkeypatch):
+    DistanceLead(monkeypatch, [("Columbia University", "Union Square")])
+    reply = client.post("/chat", json={"message": "How far is Columbia from Union Square by bike?"}).json()
+    assert reply["response"].startswith("By bike, Columbia University, Manhattan to Union Square, Manhattan is ")
+    assert "minutes" in reply["response"] and reply["distance"]["pairs"][0]["miles"] > 5
+
+
+def test_pasta_recipe_is_still_declined(monkeypatch):
+    ScriptedLead(monkeypatch, "OFF_TOPIC: I only help with NYC bike routes and street safety.")
+    reply = client.post("/chat", json={"message": "Give me a pasta recipe"}).json()
+    assert reply["declined"] and app.tools.places_in("Give me a pasta recipe") == []
+
+
+def test_airport_codes_and_landmarks_resolve():
+    assert app.tools.geocode("LGA")["label"] == "LaGuardia Airport, Queens"
+    assert app.tools.geocode("JFK")["label"] == "JFK Airport, Queens"
+    assert app.tools.geocode("EWR")["outside"] == "Newark Airport"
+    for place in ["Penn Station", "Grand Central", "Barclays Center", "Empire State Building"]:
+        assert "error" not in app.tools.geocode(place)
+
+
+def test_spelled_out_airport_names_resolve_to_the_short_label():
+    assert app.tools.geocode("John F. Kennedy International Airport")["label"] == "JFK Airport, Queens"
+    assert app.tools.geocode("Newark Liberty International Airport")["outside"] == "Newark Airport"

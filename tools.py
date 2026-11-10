@@ -152,7 +152,7 @@ HOUSE_NUMBER = re.compile(r"^\s*\d+[A-Za-z]?(-\d+)?\s+\S")
 # Common places, so landmarks work on the first try without a network call. The page's autocomplete
 # offers the same list (GET /places). Coordinates are from OpenStreetMap.
 PLACES = [
-    ("Columbia University", "Manhattan", 40.80775, -73.96249, []),
+    ("Columbia University", "Manhattan", 40.80775, -73.96249, ["columbia"]),
     ("Union Square", "Manhattan", 40.73607, -73.99019, []),
     ("Times Square", "Manhattan", 40.75701, -73.98597, []),
     ("Grand Central", "Manhattan", 40.75269, -73.97725, ["grand central terminal", "grand central station"]),
@@ -175,7 +175,46 @@ PLACES = [
     ("Astoria", "Queens", 40.77201, -73.93027, []),
     ("Long Island City", "Queens", 40.74553, -73.94850, ["lic"]),
     ("Yankee Stadium", "Bronx", 40.82958, -73.92652, []),
+    ("LaGuardia Airport", "Queens", 40.77429, -73.87199, ["lga", "laguardia", "la guardia", "la guardia airport", "laguardia airport", "lga airport"]),
+    ("JFK Airport", "Queens", 40.64131, -73.77814, ["jfk", "jfk airport", "john f. kennedy airport", "john f kennedy airport", "kennedy airport", "jfk international airport",
+                                                    "john f. kennedy international airport", "john f kennedy international airport", "kennedy international airport"]),
+    ("Empire State Building", "Manhattan", 40.74844, -73.98566, ["empire state"]),
+    ("Port Authority Bus Terminal", "Manhattan", 40.75689, -73.99084, ["port authority"]),
+    ("Rockefeller Center", "Manhattan", 40.75874, -73.97867, ["rockefeller plaza", "30 rock"]),
+    ("Lincoln Center", "Manhattan", 40.77250, -73.98360, []),
+    ("Central Park", "Manhattan", 40.78256, -73.96550, []),
+    ("Brooklyn Bridge", "Manhattan", 40.70608, -73.99686, []),
+    ("South Ferry", "Manhattan", 40.70130, -74.01308, ["whitehall terminal", "staten island ferry"]),
+    ("St. George Ferry Terminal", "Staten Island", 40.64366, -74.07355, ["st george", "st. george", "st george terminal"]),
+    ("Citi Field", "Queens", 40.75710, -73.84584, []),
+    ("Coney Island", "Brooklyn", 40.57549, -73.97046, []),
 ]
+# Places people name that are outside the city's street and crash data: they resolve to "outside NYC".
+OUTSIDE = {"ewr": "Newark Airport", "newark": "Newark", "newark airport": "Newark Airport",
+           "newark liberty": "Newark Airport", "newark liberty airport": "Newark Airport",
+           "newark liberty international airport": "Newark Airport", "jersey city": "Jersey City", "hoboken": "Hoboken",
+           "yonkers": "Yonkers", "fort lee": "Fort Lee", "westchester": "Westchester", "long island": "Long Island",
+           "white plains": "White Plains", "philadelphia": "Philadelphia", "new jersey": "New Jersey"}
+
+
+def outside_place(address: str) -> str | None:
+    """The plain name of a known place outside NYC, or None."""
+    name = re.sub(r"[^a-z. ]", "", address.lower()).strip().removesuffix(", nj").strip()
+    name = re.sub(r"\s+(nj|new jersey|ny)$", "", name)
+    return OUTSIDE.get(name)
+
+
+def places_in(text: str) -> list[str]:
+    """Built-in and known outside places named in a message, in order: a sign it's a trip or distance question."""
+    low = f" {re.sub(r'[^a-z0-9. ]', ' ', text.lower())} "
+    names = [(title, [title.lower(), *aliases]) for title, _, _, _, aliases in PLACES]
+    names += [(plain, [key]) for key, plain in OUTSIDE.items()]
+    found = []
+    for title, words in names:
+        at = [low.find(f" {w} ") for w in words if f" {w} " in low]
+        if at and title not in [t for _, t in found]:
+            found.append((min(at), title))
+    return [t for _, t in sorted(found)]
 BOROUGH_WORDS = {"manhattan": "Manhattan", "new york": "Manhattan", "brooklyn": "Brooklyn", "queens": "Queens",
                  "bronx": "Bronx", "the bronx": "Bronx", "staten island": "Staten Island", "ny": None, "nyc": None,
                  "new york city": None, "new york ny": None, "usa": None}
@@ -319,6 +358,9 @@ def geocode(address: str) -> dict:
     """Turn an NYC address or place name, or a 'lat,lon' string, into coordinates."""
     if address in _geocoded:
         return _geocoded[address]
+    if far := outside_place(address):
+        return {"error": f"'{far}' is outside New York City.", "outside": far,
+                "next_step": "Say it is outside the NYC street and crash data, and answer for the NYC part."}
     match = LAT_LON.match(address)
     if match:
         place = {"label": address.strip(), "lat": float(match[1]), "lon": float(match[2]), "source": "given"}
@@ -330,7 +372,8 @@ def geocode(address: str) -> dict:
     if place is None:
         return {"error": f"No match for '{address}'.", "next_step": "Ask the user for a street address with a borough."}
     if not (BOX[0] <= place["lat"] <= BOX[1] and BOX[2] <= place["lon"] <= BOX[3]):
-        return {"error": f"'{address}' is outside New York City.", "next_step": "Ask for a start and end inside the five boroughs."}
+        return {"error": f"'{address}' is outside New York City.", "outside": address.strip(),
+                "next_step": "Say it is outside the NYC street and crash data, and answer for the NYC part."}
     _geocoded[address] = place
     return place
 

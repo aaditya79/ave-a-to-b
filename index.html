@@ -1677,6 +1677,16 @@
                 for (const name of ["Lead", "Writer", "Verifier"]) if (state.agents[name] && state.agents[name].status !== "failed") setChip(name, "done");
                 if (state.agents.Lead) state.agents.Lead.text = e.clarify ? `Asked: ${e.response}` : "Found the routes, sent the researchers, and checked for gaps.";
                 if (e.declined) return showClarify(e.response, e.options || []);
+                if (e.distance) {
+                    // A distance answer: route_options drew the routes while it ran, but the comparison is only offered
+                    for (const layer of [routeLayer, projectLayer, sliderLayer, labelLayer, spotLayer, pinLayer]) layer.clearLayers();
+                    for (const id of ["tiles", "summary", "sliderBox", "legend"]) $(id)?.classList.add("hidden");
+                    $("routeCards").replaceChildren();
+                    $("app").classList.remove("has-results");
+                    for (const li of document.querySelectorAll("#statusLines li")) li.className = li.dataset.line === "routes" ? "done" : "skipped";
+                    state.messages = [...state.messages, { role: "user", content: state.asked }, { role: "assistant", content: e.response }];
+                    return showClarify(e.response, e.options || []);
+                }
                 if (e.clarify) {
                     state.messages = [...state.messages, { role: "user", content: state.asked }, { role: "assistant", content: e.response }];
                     return showClarify(e.response, e.options || [], e.area);
