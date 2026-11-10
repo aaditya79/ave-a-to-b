@@ -639,7 +639,7 @@ def test_your_rides_card_in_history(page, base_url, monkeypatch):
     text = page.inner_text("#rideStats")
     assert "Based on rides you marked as ridden." in text and "Longest ride" in text and "Boroughs: Queens, Bronx" in text
     assert page.locator("#rideStats .fun").inner_text().count("About") + page.locator("#rideStats .fun").inner_text().count("Like") == 2
-    assert page.locator(".badge.off").count() == 3
+    assert page.locator(".badge-tile.locked").count() == 3
     assert page.evaluate("readHistory().find((x) => x.id === 2).ridden") is True  # kept in History, and so in the session
     page.evaluate("localStorage.clear()")
 
@@ -718,3 +718,50 @@ def test_the_empty_form_message_is_gray_not_red(page, base_url):
     assert not page.is_visible("#errorBox")
     color = page.evaluate("getComputedStyle(document.getElementById('formNote')).color")
     assert color == "rgb(75, 87, 103)"  # --muted
+
+
+def test_badges_are_subway_tokens_with_progress_dates_and_a_pop(page, base_url, monkeypatch):
+    from tests.test_sessions import MemoryStore
+    monkeypatch.setattr(app, "session_store", MemoryStore())
+    page.set_viewport_size({"width": 390, "height": 900})
+    page.goto(base_url)
+    page.evaluate(f"localStorage.setItem('aveHistory', JSON.stringify({json.dumps([{**r, 'ridden': False} for r in RIDES])}))")
+    page.reload()
+    page.click("#signMenu")
+    page.click("#navHistory")
+    page.wait_for_selector(".badge-tile")
+    tiles = page.evaluate("""[...document.querySelectorAll('.badge-tile')].map((t) => ({ key: t.dataset.badge, locked: t.classList.contains('locked'),
+        color: getComputedStyle(t.querySelector('.bullet-mark')).backgroundColor, letter: t.querySelector('.bullet-mark').textContent,
+        round: getComputedStyle(t.querySelector('.token')).borderRadius, size: t.querySelector('.token').getBoundingClientRect().width,
+        lock: !!t.querySelector('.token-lock'), line: t.querySelector('.badge-line').textContent, tip: t.title, top: Math.round(t.getBoundingClientRect().top) }))""")
+    assert [(t["letter"], t["color"]) for t in tiles] == [("5", "rgb(0, 147, 60)"), ("B", "rgb(255, 99, 25)"), ("G", "rgb(108, 190, 69)")]
+    assert all(t["locked"] and t["lock"] and t["round"] == "50%" and t["size"] == 64 for t in tiles)
+    assert [t["line"] for t in tiles] == ["0 of 5 boroughs", "0 of 1 crossings", "0 of 3 rides"] and tiles[0]["tip"] == "Ride in all five boroughs"
+    assert len({t["top"] for t in tiles}) == 1  # three to a row on a phone
+    # Marking rides: badges earned by that tap pop, then show their date
+    popped = []
+    for i in range(4):
+        page.locator(".hist-row").nth(i).locator(".rode input").check()
+        popped += page.eval_on_selector_all(".token.pop", "ts => ts.map((t) => t.closest('.badge-tile').dataset.badge)")
+    assert popped == ["bridgeCrosser", "allBoroughs", "greenwayRegular"]
+    assert page.locator(".badge-tile.locked").count() == 0 and page.locator(".token-lock").count() == 0
+    assert all(t.startswith("Earned ") for t in page.locator(".badge-line").all_inner_texts())
+    page.locator(".badge-tile", has_text="Bridge crosser").click()
+    assert "East River bridge" in page.inner_text("#badgeDetail") and "DUMBO, Brooklyn → Union Square" in page.inner_text("#badgeDetail")
+    page.locator(".hist-row").nth(3).locator(".rode input").uncheck()  # Staten Island unmarked: back to 4 of 5, with a bar
+    tile = page.locator(".badge-tile", has_text="All five boroughs")
+    assert "locked" in tile.get_attribute("class") and tile.locator(".badge-line").inner_text() == "4 of 5 boroughs"
+    assert tile.locator(".badge-bar span").get_attribute("style") == "width: 80%;"
+    tile.click()
+    assert "So far: 4 of 5 boroughs" in page.inner_text("#badgeDetail")
+    page.evaluate("localStorage.clear()")
+    page.set_viewport_size({"width": 1280, "height": 800})
+
+
+def test_the_badge_pop_respects_reduced_motion(page, base_url):
+    page.emulate_media(reduced_motion="reduce")
+    page.goto(base_url)
+    page.evaluate("document.body.insertAdjacentHTML('beforeend', '<div class=\"token pop\" id=\"tk\"></div>')")
+    assert page.evaluate("getComputedStyle(document.getElementById('tk')).animationName") == "none"
+    page.emulate_media(reduced_motion="no-preference")
+    assert page.evaluate("getComputedStyle(document.getElementById('tk')).animationName") == "token-pop"

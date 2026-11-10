@@ -183,10 +183,30 @@
             .stats-grid span { font-size: 12px; color: var(--muted); }
             .highlights { margin: 0; padding-left: 18px; font-size: 14px; }
             .fun { font-size: 14px; margin: 0; min-height: 2.9em; }
-            .badges { display: flex; flex-wrap: wrap; gap: 10px 16px; }
-            .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--navy); }
-            .badge i { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: #fff; font: 700 12px Helvetica, Arial, sans-serif; font-style: normal; }
-            .badge.off { color: var(--muted); }
+            /* Badges: tiles with a subway-token coin, a brass ring around the line's bullet */
+            .badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); gap: 12px 8px; }
+            .badge-tile { display: grid; justify-items: center; align-content: start; gap: 4px; text-align: center; border: 0; background: none; padding: 6px 2px; border-radius: 10px; cursor: pointer; font: inherit; color: var(--navy); }
+            .badge-tile:hover, .badge-tile[aria-expanded="true"] { background: #fff; }
+            .badge-name { font-size: 13px; font-weight: 600; line-height: 1.25; }
+            .badge-line { font-size: 12px; color: var(--muted); line-height: 1.3; white-space: nowrap; }
+            .token-wrap { position: relative; width: 64px; height: 64px; }
+            .token { position: relative; width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; overflow: hidden;
+                background: radial-gradient(circle at 34% 28%, #fbeab0 0%, #dcb556 38%, #b48a2c 70%, #7d5c18 100%);
+                box-shadow: inset 0 2px 3px rgba(255, 255, 255, 0.55), inset 0 -3px 6px rgba(60, 40, 0, 0.45), 0 2px 5px rgba(11, 31, 58, 0.25); }
+            .token::before { content: ""; position: absolute; inset: 7px; border-radius: 50%; box-shadow: inset 0 2px 4px rgba(60, 40, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.5); }
+            .token .bullet-mark { position: relative; width: 36px; height: 36px; border-radius: 50%; color: #fff; display: grid; place-items: center; font: 700 21px Helvetica, Arial, sans-serif; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35); }
+            .badge-tile.locked .token { filter: grayscale(1); opacity: 0.5; }
+            .badge-tile.locked .badge-name { color: var(--muted); }
+            .token-lock { position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; border-radius: 50%; background: #fff; display: grid; place-items: center; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
+            .badge-bar { width: 72px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+            .badge-bar span { display: block; height: 100%; background: var(--muted); border-radius: 2px; }
+            .badge-detail { margin: 0; font-size: 14px; background: #fff; border-radius: 8px; padding: 8px 10px; }
+            /* Newly earned: a short pop, and a shine across the ring */
+            .token.pop { animation: token-pop 0.5s ease-out; }
+            .token.pop::after { content: ""; position: absolute; inset: 0; background: linear-gradient(115deg, transparent 30%, rgba(255, 255, 255, 0.75) 48%, transparent 66%); transform: translateX(-120%); animation: token-shine 0.5s ease-out; }
+            @keyframes token-pop { 0% { transform: scale(0.6); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
+            @keyframes token-shine { to { transform: translateX(120%); } }
+            @media (prefers-reduced-motion: reduce) { .token.pop, .token.pop::after { animation: none; } }
             .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
             .badge.off i { background: #b8c0cc !important; }
             .loop-pin { background: #111; color: #fff; font: 700 12px "Helvetica Neue", Helvetica, Arial, sans-serif; padding: 4px 8px; border-radius: 6px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.3); border: 2px solid #fff; }
@@ -784,11 +804,24 @@
             // A light, calm basemap: the Positron style from OpenFreeMap (free, no key), drawn with MapLibre.
             // Without WebGL, the same OpenStreetMap data as plain tiles, muted.
             const webgl = (() => { try { return !!document.createElement("canvas").getContext("webgl"); } catch (e) { return false; } })();
+            const BASEMAP_STYLE = "https://tiles.openfreemap.org/styles/positron";
+            const BASEMAP_CREDIT = '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/" target="_blank">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors';
+            // Positron's highway-shield filters compare ["get", "ref_length"] with a number, and roads without that field
+            // make MapLibre warn "Expected value to be of type number, but found null". A missing value now counts as
+            // failing the comparison, which is what the filter did anyway, without the warning.
+            function quietStyle(style) {
+                const FAIL = { "<": 1e9, "<=": 1e9, ">": -1e9, ">=": -1e9 };
+                const fix = (x) => {
+                    if (!Array.isArray(x)) return x;
+                    if (x[0] in FAIL && Array.isArray(x[1]) && x[1][0] === "get" && typeof x[2] === "number") return [x[0], ["coalesce", x[1], FAIL[x[0]]], x[2]];
+                    return x.map(fix);
+                };
+                for (const layer of style.layers || []) if (layer.filter) layer.filter = fix(layer.filter);
+                return style;
+            }
             if (webgl && L.maplibreGL) {
-                L.maplibreGL({
-                    style: "https://tiles.openfreemap.org/styles/positron",
-                    attribution: '<a href="https://openfreemap.org" target="_blank">OpenFreeMap</a> &copy; <a href="https://www.openmaptiles.org/" target="_blank">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors',
-                }).addTo(map);
+                fetch(BASEMAP_STYLE).then((r) => r.json()).then(quietStyle).catch(() => BASEMAP_STYLE)
+                    .then((style) => L.maplibreGL({ style, attribution: BASEMAP_CREDIT }).addTo(map));
             } else {
                 L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
                     maxZoom: 19,
@@ -2599,9 +2632,13 @@
             });
             // --- Your rides: stats from the History trips marked "I rode this", all computed here in the browser ---
             function markRidden(id, ridden) {
-                writeHistory(readHistory().map((x) => (x.id === id ? { ...x, ridden } : x)));
+                const before = rideStats(readHistory()).badgeInfo;
+                writeHistory(readHistory().map((x) => (x.id === id ? { ...x, ridden, riddenAt: ridden ? Date.now() : undefined } : x)));
                 syncSession();
                 renderHistory();
+                // A badge earned by this tap pops (the animation is off for reduced motion)
+                const after = rideStats(readHistory()).badgeInfo;
+                for (const b of BADGES) if (after[b.key].earned && !before[b.key].earned) document.querySelector(`.badge-tile[data-badge="${b.key}"] .token`)?.classList.add("pop");
             }
             // Fixed distances for the comparisons, each with its source
             const FUN = {
@@ -2631,14 +2668,29 @@
                 const counts = new Map();
                 for (const x of rides) { const k = `${x.trip.start} → ${x.trip.end}`; counts.set(k, (counts.get(k) || 0) + 1); }
                 const most = [...counts].sort((a, b) => b[1] - a[1])[0] || null;
-                const bridge = rides.some((x) => (riddenRoute(x)?.streets || []).some((st) => EAST_RIVER_BRIDGE.test(st.name)));
-                const greenwayRides = rides.filter((x) => (lanes(x).path || 0) >= 0.5 * (+x.rec.miles || Infinity)).length;
+                const crossesBridge = (x) => (riddenRoute(x)?.streets || []).some((st) => EAST_RIVER_BRIDGE.test(st.name));
+                const onGreenway = (x) => (lanes(x).path || 0) >= 0.5 * (+x.rec.miles || Infinity);
+                const bridge = rides.some(crossesBridge);
+                const greenwayRides = rides.filter(onGreenway).length;
+                // Walk the rides in the order they were marked ridden: a badge's date is the ride that completed it
+                const info = { allBoroughs: { have: 0, need: 5 }, bridgeCrosser: { have: 0, need: 1 }, greenwayRegular: { have: 0, need: 3 } };
+                const seen = new Set();
+                for (const x of [...rides].sort((a, b) => (a.riddenAt || a.at) - (b.riddenAt || b.at))) {
+                    for (const st of riddenRoute(x)?.streets || []) if (BOROUGHS.includes(st.borough)) seen.add(st.borough);
+                    for (const end of [x.result?.map?.start?.label, x.result?.map?.end?.label, x.trip.start, x.trip.end]) for (const b of BOROUGHS) if ((end || "").includes(b)) seen.add(b);
+                    info.allBoroughs.have = seen.size;
+                    info.bridgeCrosser.have += crossesBridge(x) ? 1 : 0;
+                    info.greenwayRegular.have += onGreenway(x) ? 1 : 0;
+                    for (const k in info) if (!info[k].at && info[k].have >= info[k].need) Object.assign(info[k], { at: x.riddenAt || x.at, trip: `${x.trip.start} → ${x.trip.end}` });
+                }
+                for (const k in info) Object.assign(info[k], { earned: info[k].have >= info[k].need, have: Math.min(info[k].have, info[k].need) });
                 return {
                     rides: rides.length, miles, minutes, kcal: rides.reduce((a, x) => a + kcal(+x.rec.miles, +x.rec.minutes, kg), 0), safeMiles,
                     longest: longest && { trip: `${longest.trip.start} → ${longest.trip.end}`, miles: +longest.rec.miles },
                     mostRidden: most && { trip: most[0], times: most[1] },
                     boroughs: BOROUGHS.filter((b) => boroughs.has(b)),
                     badges: { allBoroughs: boroughs.size === 5, bridgeCrosser: bridge, greenwayRegular: greenwayRides >= 3 },
+                    badgeInfo: info,
                 };
             }
             const roughly = (n) => (n >= 10 ? Math.round(n).toLocaleString("en-US") : n >= 1 ? n.toFixed(1) : n.toFixed(2));
@@ -2653,17 +2705,22 @@
                     `About ${roughly((miles * FUN.carGramsCO2PerMile) / 1000)} kg of CO2 not emitted, compared with driving the same miles.`,
                 ];
             }
+            // Each badge is a subway bullet: a real line's letter or number in that line's official color. New badges
+            // should do the same.
             const BADGES = [
-                { key: "allBoroughs", letter: "5", color: "var(--blue)", name: "All five boroughs" },
-                { key: "bridgeCrosser", letter: "B", color: "var(--orange)", name: "Bridge crosser" },
-                { key: "greenwayRegular", letter: "G", color: "#00933c", name: "Greenway regular" },
+                { key: "allBoroughs", letter: "5", color: "#00933C", name: "All five boroughs", line: "the 4/5/6 green",
+                    means: "You rode in all five boroughs: Manhattan, Brooklyn, Queens, the Bronx, and Staten Island.", howTo: "Ride in all five boroughs", unit: "boroughs", short: "boroughs" },
+                { key: "bridgeCrosser", letter: "B", color: "#FF6319", name: "Bridge crosser", line: "the B/D/F/M orange",
+                    means: "You rode a route over an East River bridge: the Brooklyn, Manhattan, Williamsburg, Queensboro, RFK, or Roosevelt Island bridge.", howTo: "Ride a route that crosses an East River bridge", unit: "bridge rides", short: "crossings" },
+                { key: "greenwayRegular", letter: "G", color: "#6CBE45", name: "Greenway regular", line: "the G line green",
+                    means: "You made 3 rides that were at least half on greenways and other off-street paths.", howTo: "Make 3 rides at least half on greenways", unit: "greenway rides", short: "rides" },
             ];
             let funTimer = null, funTurn = 0;
             function renderStats(list) {
                 clearInterval(funTimer);
                 const box = $("rideStats"), st = rideStats(list);
                 const title = el("h3", { id: "rideStatsTitle" }, "Your rides");
-                if (!st.rides) return box.replaceChildren(title, el("p", { class: "small" }, "Mark a trip as ridden to start your stats."));
+                if (!st.rides) return box.replaceChildren(title, el("p", { class: "small" }, "Mark a trip as ridden to start your stats."), ...badgeGrid(st));
                 const fun = comparisons(st.miles), line = el("p", { class: "fun", "aria-live": "polite" });
                 const showFun = () => { line.textContent = [fun[funTurn % fun.length], fun[(funTurn + 1) % fun.length]].join(" "); funTurn += 2; };
                 showFun();
@@ -2683,8 +2740,37 @@
                         el("li", {}, el("b", {}, "Most ridden: "), `${st.mostRidden.trip}, ${st.mostRidden.times} time${st.mostRidden.times === 1 ? "" : "s"}`),
                         el("li", {}, el("b", {}, "Boroughs: "), st.boroughs.length ? st.boroughs.join(", ") : "none recorded")),
                     line,
-                    el("div", { class: "badges" }, BADGES.map((b) => el("span", { class: `badge${st.badges[b.key] ? "" : " off"}`, title: st.badges[b.key] ? "Earned" : "Not yet" },
-                        el("i", { style: `background: ${b.color}`, "aria-hidden": "true" }, b.letter), b.name, st.badges[b.key] ? "" : el("span", { class: "visually-hidden" }, " (not yet)")))));
+                    ...badgeGrid(st));
+            }
+            const monthDay = (ms) => new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+            const LOCK = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="#4b5767"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="#4b5767" stroke-width="1.8"/></svg>`;
+            function badgeGrid(st) {
+                const detail = el("p", { class: "badge-detail hidden", id: "badgeDetail", "aria-live": "polite" });
+                const tiles = BADGES.map((b) => {
+                    const i = st.badgeInfo[b.key];
+                    const token = el("div", { class: "token-wrap" }, el("div", { class: "token" }, el("span", { class: "bullet-mark", style: `background: ${b.color}` }, b.letter)));
+                    if (!i.earned) token.insertAdjacentHTML("beforeend", `<span class="token-lock">${LOCK}</span>`);
+                    const tile = el("button", { class: `badge-tile${i.earned ? "" : " locked"}`, type: "button", "data-badge": b.key, "aria-expanded": "false", "aria-controls": "badgeDetail",
+                            title: i.earned ? b.name : b.howTo,
+                            "aria-label": `${b.name}: ${i.earned ? `earned ${monthDay(i.at)}` : `locked, ${i.have} of ${i.need} ${b.unit}`}`,
+                            onclick: () => {
+                                const open = tile.getAttribute("aria-expanded") === "true";
+                                for (const t of tile.parentNode.querySelectorAll(".badge-tile")) t.setAttribute("aria-expanded", "false");
+                                if (open) return detail.classList.add("hidden");
+                                tile.setAttribute("aria-expanded", "true");
+                                detail.textContent = i.earned
+                                    ? `${b.name}: ${b.means} Earned ${monthDay(i.at)}, with ${i.trip}. Its bullet is ${b.line}.`
+                                    : `${b.name}: ${b.howTo.toLowerCase().replace(/^./, (c) => c.toUpperCase())}. So far: ${i.have} of ${i.need} ${b.unit}. Only trips marked "I rode this" count.`;
+                                detail.classList.remove("hidden");
+                            } },
+                        token,
+                        el("span", { class: "badge-name" }, b.name),
+                        i.earned ? el("span", { class: "badge-line" }, `Earned ${monthDay(i.at)}`)
+                            : [el("span", { class: "badge-line" }, `${i.have} of ${i.need} ${b.short}`),
+                               el("span", { class: "badge-bar", "aria-hidden": "true" }, el("span", { style: `width: ${Math.round((100 * i.have) / i.need)}%` }))]);
+                    return tile;
+                });
+                return [el("div", { class: "badges" }, tiles), detail];
             }
             function openHistory() {
                 $("sessionId").textContent = sessionId();

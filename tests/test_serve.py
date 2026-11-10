@@ -88,7 +88,7 @@ def test_the_page_shows_the_note_then_works_once_the_app_is_ready():
             assert page.is_visible("#startingNote") and page.is_visible("#signbar") and page.is_visible("#start")
             page.wait_for_function("exploreData !== null", timeout=30000)  # /explore waited, then went through
             page.wait_for_function("document.getElementById('statCrashes').textContent !== '…'", timeout=10000)
-            assert not page.is_visible("#startingNote")
+            page.wait_for_selector("#startingNote", state="detached", timeout=5000)  # /ready and /explore finish within a poll of each other
             assert errors == []
             browser.close()
     finally:
