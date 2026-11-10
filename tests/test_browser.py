@@ -639,7 +639,7 @@ def test_your_rides_card_in_history(page, base_url, monkeypatch):
     text = page.inner_text("#rideStats")
     assert "Based on rides you marked as ridden." in text and "Longest ride" in text and "Boroughs: Queens, Bronx" in text
     assert page.locator("#rideStats .fun").inner_text().count("About") + page.locator("#rideStats .fun").inner_text().count("Like") == 2
-    assert page.locator(".badge-tile.locked").count() == 3
+    assert page.locator(".badge-tile.locked").count() == 11 and page.inner_text(".badge-count") == "1 of 12 badges"  # First ride
     assert page.evaluate("readHistory().find((x) => x.id === 2).ridden") is True  # kept in History, and so in the session
     page.evaluate("localStorage.clear()")
 
@@ -730,22 +730,26 @@ def test_badges_are_subway_tokens_with_progress_dates_and_a_pop(page, base_url, 
     page.click("#signMenu")
     page.click("#navHistory")
     page.wait_for_selector(".badge-tile")
-    tiles = page.evaluate("""[...document.querySelectorAll('.badge-tile')].map((t) => ({ key: t.dataset.badge, locked: t.classList.contains('locked'),
+    tiles = page.evaluate("""[...document.querySelectorAll('.badge-tile[data-badge="allBoroughs"], .badge-tile[data-badge="bridgeCrosser"], .badge-tile[data-badge="greenwayRegular"]')].map((t) => ({ key: t.dataset.badge, locked: t.classList.contains('locked'),
         color: getComputedStyle(t.querySelector('.bullet-mark')).backgroundColor, letter: t.querySelector('.bullet-mark').textContent,
         round: getComputedStyle(t.querySelector('.token')).borderRadius, size: t.querySelector('.token').getBoundingClientRect().width,
         lock: !!t.querySelector('.token-lock'), line: t.querySelector('.badge-line').textContent, tip: t.title, top: Math.round(t.getBoundingClientRect().top) }))""")
     assert [(t["letter"], t["color"]) for t in tiles] == [("5", "rgb(0, 147, 60)"), ("B", "rgb(255, 99, 25)"), ("G", "rgb(108, 190, 69)")]
     assert all(t["locked"] and t["lock"] and t["round"] == "50%" and t["size"] == 64 for t in tiles)
     assert [t["line"] for t in tiles] == ["0 of 5 boroughs", "0 of 1 crossings", "0 of 3 rides"] and tiles[0]["tip"] == "Ride in all five boroughs"
-    assert len({t["top"] for t in tiles}) == 1  # three to a row on a phone
+    rows = page.evaluate("[...document.querySelectorAll('.badge-tile')].map((t) => Math.round(t.getBoundingClientRect().top))")
+    assert rows.count(rows[0]) == 3  # three to a row on a phone
     # Marking rides: badges earned by that tap pop, then show their date
     popped = []
     for i in range(4):
         page.locator(".hist-row").nth(i).locator(".rode input").check()
         popped += page.eval_on_selector_all(".token.pop", "ts => ts.map((t) => t.closest('.badge-tile').dataset.badge)")
-    assert popped == ["bridgeCrosser", "allBoroughs", "greenwayRegular"]
-    assert page.locator(".badge-tile.locked").count() == 0 and page.locator(".token-lock").count() == 0
-    assert all(t.startswith("Earned ") for t in page.locator(".badge-line").all_inner_texts())
+    assert [b for b in popped if b in ("bridgeCrosser", "allBoroughs", "greenwayRegular")] == ["bridgeCrosser", "allBoroughs", "greenwayRegular"]
+    assert popped[0] == "firstRide"
+    for key in ["bridgeCrosser", "allBoroughs", "greenwayRegular"]:
+        tile = page.locator(f'.badge-tile[data-badge="{key}"]')
+        assert "locked" not in tile.get_attribute("class") and tile.locator(".token-lock").count() == 0
+        assert tile.locator(".badge-line").inner_text().startswith("Earned ")
     page.locator(".badge-tile", has_text="Bridge crosser").click()
     assert "East River bridge" in page.inner_text("#badgeDetail") and "DUMBO, Brooklyn → Union Square" in page.inner_text("#badgeDetail")
     page.locator(".hist-row").nth(3).locator(".rode input").uncheck()  # Staten Island unmarked: back to 4 of 5, with a bar
@@ -765,3 +769,87 @@ def test_the_badge_pop_respects_reduced_motion(page, base_url):
     assert page.evaluate("getComputedStyle(document.getElementById('tk')).animationName") == "none"
     page.emulate_media(reduced_motion="no-preference")
     assert page.evaluate("getComputedStyle(document.getElementById('tk')).animationName") == "token-pop"
+
+
+
+def trip_ridden(i, *, start="Union Square, Manhattan", end="Times Square, Manhattan", miles=2.0, when="", ref=None, at=None, lowest=False):
+    """One History entry, marked ridden, for the badge rules."""
+    route_ref = ref or f"route:{i:08x}"
+    routes = {"balanced": {"route_ref": route_ref, "miles": miles, "minutes": miles * 6, "miles_by_lane": {"none": miles}, "streets": []},
+              "lowest_risk": {"route_ref": route_ref if lowest else "route:ffffffff", "miles": miles, "minutes": miles * 6, "miles_by_lane": {}, "streets": []}}
+    return {"id": i, "at": 1_700_000_000_000 + i, "riddenAt": at or 1_700_000_000_000 + i, "ridden": True,
+            "trip": {"start": start, "end": end, "when": when},
+            "rec": {"name": "Balanced", "line": [[40.7, -73.99]], "miles": miles, "minutes": miles * 6},
+            "result": {"map": {"recommended_route": "balanced", "routes": routes, "start": {"label": start}, "end": {"label": end}}}}
+
+
+def badge_info(page, rides):
+    return page.evaluate(f"rideStats({json.dumps(rides)}, 70).badgeInfo")
+
+
+def test_each_badge_rule(page, base_url):
+    page.goto(base_url)
+    one = badge_info(page, [trip_ridden(1)])
+    assert one["firstRide"]["earned"] and not one["luckySeven"]["earned"] and one["luckySeven"]["have"] == 1
+    assert badge_info(page, [trip_ridden(i) for i in range(7)])["luckySeven"]["earned"]
+    # Ave A to B: a trip that starts or ends on Avenue A
+    assert badge_info(page, [trip_ridden(1, start="199 Avenue A, Manhattan")])["aveAToB"]["earned"]
+    assert badge_info(page, [trip_ridden(1, end="Tompkins Square, Ave A")])["aveAToB"]["earned"]
+    assert not badge_info(page, [trip_ridden(1, start="Avenue B, Manhattan"), trip_ridden(2, start="200 Avenue Avenue, Queens")])["aveAToB"]["earned"]
+    # Early bird: 3 rides with a morning ride time
+    early = [trip_ridden(1, when="around 8am"), trip_ridden(2, when="around 6am"), trip_ridden(3, when="in the evening, around 6pm"), trip_ridden(4, when="")]
+    assert badge_info(page, early)["earlyBird"]["have"] == 2
+    assert badge_info(page, early + [trip_ridden(5, when="around 11:30am")])["earlyBird"]["earned"]
+    assert not badge_info(page, [trip_ridden(i, when="at night, around 10pm") for i in range(3)])["earlyBird"]["earned"]
+    # Long haul: one ride of 10 miles or more
+    assert badge_info(page, [trip_ridden(1, miles=9.9), trip_ridden(2, miles=9.9)])["longHaul"] == {"have": 9.9, "need": 10, "earned": False}
+    assert badge_info(page, [trip_ridden(1, miles=10.0)])["longHaul"]["earned"]
+    # Marathon and Distance: miles in all
+    m = badge_info(page, [trip_ridden(i, miles=5.0) for i in range(5)])
+    assert m["marathon"]["have"] == 25 and not m["marathon"]["earned"]
+    assert badge_info(page, [trip_ridden(i, miles=5.24) for i in range(5)])["marathon"]["earned"]
+    d = badge_info(page, [trip_ridden(i, miles=9.9) for i in range(10)])
+    assert d["distance"]["have"] == 99 and not d["distance"]["earned"]
+    assert badge_info(page, [trip_ridden(i, miles=10.0) for i in range(10)])["distance"]["earned"]
+    # Safety first: the recommended or lowest-risk route on 5 ridden trips
+    assert badge_info(page, [trip_ridden(i) for i in range(4)])["safetyFirst"]["have"] == 4
+    assert badge_info(page, [trip_ridden(i) for i in range(5)])["safetyFirst"]["earned"]
+    fastest = trip_ridden(9)
+    fastest["rec"]["route_ref"] = "route:0000fa57"  # a ride saved on another route doesn't count
+    assert badge_info(page, [trip_ridden(i) for i in range(4)] + [fastest])["safetyFirst"]["have"] == 4
+    # New streets: 5 different routes (the same route twice counts once)
+    assert badge_info(page, [trip_ridden(i, ref="route:aaaaaaaa") for i in range(5)])["newStreets"]["have"] == 1
+    assert badge_info(page, [trip_ridden(i) for i in range(5)])["newStreets"]["earned"]
+
+
+def test_a_badge_date_is_the_ride_that_completed_it(page, base_url):
+    page.goto(base_url)
+    rides = [trip_ridden(1, miles=4, at=1_731_000_000_000), trip_ridden(2, miles=30, at=1_731_300_000_000), trip_ridden(3, miles=4, at=1_731_100_000_000)]
+    info = badge_info(page, rides)
+    assert info["marathon"]["at"] == 1_731_300_000_000 and info["firstRide"]["at"] == 1_731_000_000_000
+
+
+def test_badges_sort_earned_first_then_closest_and_count(page, base_url, monkeypatch):
+    from tests.test_sessions import MemoryStore
+    monkeypatch.setattr(app, "session_store", MemoryStore())
+    page.goto(base_url)
+    rides = [trip_ridden(i, miles=5.0, when="around 8am") for i in range(4)]  # 20 mi, 4 rides, 4 morning, 4 routes
+    page.evaluate(f"localStorage.setItem('aveHistory', JSON.stringify({json.dumps(rides)}))")
+    page.reload()
+    page.click("#navHistory")
+    page.wait_for_selector(".badge-tile")
+    order = page.eval_on_selector_all(".badge-tile", "ts => ts.map((t) => [t.dataset.badge, t.classList.contains('locked')])")
+    earned = [k for k, locked in order if not locked]
+    assert set(earned) == {"firstRide", "earlyBird"} and [locked for _, locked in order] == [False] * 2 + [True] * 10
+    locked = [k for k, is_locked in order if is_locked]
+    # closest first: Safety first and New streets 4 of 5 (80%), Marathon 20 of 26.2 (76%), then Lucky seven 4 of 7 ...
+    assert locked[:3] == ["safetyFirst", "newStreets", "marathon"] and locked[3] == "luckySeven"
+    assert page.inner_text(".badge-count") == "2 of 12 badges"
+    tile = page.locator('.badge-tile[data-badge="marathon"]')
+    assert tile.locator(".badge-line").inner_text() == "20 of 26.2 mi" and tile.get_attribute("title") == "Ride 26.2 miles in all"
+    n = page.locator('.badge-tile[data-badge="newStreets"] .bullet-mark')
+    assert n.evaluate("e => [getComputedStyle(e).backgroundColor, getComputedStyle(e).color]") == ["rgb(252, 204, 10)", "rgb(0, 0, 0)"]
+    colors = page.evaluate("Object.fromEntries(BADGES.map((b) => [b.letter, b.color]))")
+    assert colors == {"1": "#EE352E", "7": "#B933AD", "A": "#0039A6", "E": "#0039A6", "L": "#A7A9AC", "M": "#FF6319", "D": "#FF6319",
+                      "S": "#808183", "N": "#FCCC0A", "5": "#00933C", "B": "#FF6319", "G": "#6CBE45"}
+    page.evaluate("localStorage.clear()")
