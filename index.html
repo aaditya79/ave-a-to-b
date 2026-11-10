@@ -350,7 +350,7 @@
                     <p style="margin: 14px 0 0"><button class="linkish" id="askToggle" type="button" aria-expanded="false">Or ask a question instead (for example, Is biking in Brooklyn safe?)</button></p>
                     <div class="hidden" id="askBox">
                         <div class="row">
-                            <input class="input" id="question" placeholder="Is biking in Brooklyn safe?" />
+                            <input class="input" id="question" placeholder="Is biking in Brooklyn safe?" maxlength="500" />
                             <button class="btn" id="askGo" type="button" style="flex: none">Ask</button>
                         </div>
                     </div>
@@ -372,7 +372,7 @@
                     <div class="bubble"><div class="who">Ave A to B</div><div id="clarifyText"></div></div>
                     <div class="examples" id="clarifyOptions"></div>
                     <div class="row" style="margin-top: 12px">
-                        <input class="input" id="reply" placeholder="Type your answer" autocomplete="off" />
+                        <input class="input" id="reply" placeholder="Type your answer" autocomplete="off" maxlength="500" />
                         <button class="btn" id="send" style="flex: none">Send</button>
                     </div>
                 </section>
@@ -805,7 +805,7 @@
             // --- Handoff timeline: Lead → Researcher briefs, each agent's tool calls, findings, the gap decision,
             // the Writer's input, and the Verifier's problems and fixes, in the order they happened ---
             const AGENT_COLORS = [["Lead", "#0b1f3a"], ["Crash", "#c2410c"], ["Infrastructure", "#15803d"], ["Exposure", "#7c3aed"],
-                ["Writer", "#b45309"], ["Verifier", "#4338ca"], ["Pipeline", "#6b7280"], ["Rider", "#6b7280"]];
+                ["Writer", "#b45309"], ["Verifier", "#4338ca"], ["Pipeline", "#6b7280"], ["Rider", "#6b7280"], ["Guardrail", "#b42318"]];
             const agentColor = (name) => (AGENT_COLORS.find(([k]) => String(name).startsWith(k)) || [, "#6b7280"])[1];
             const who = (name) => el("span", { class: "who", style: `color:${agentColor(name)}` }, name === "Pipeline" ? "Code" : name);
             const secs = (t) => (t == null ? "" : `${Number(t).toFixed(1)} s`);
@@ -1321,6 +1321,7 @@
                 setStep("done");
                 for (const name of ["Lead", "Writer", "Verifier"]) if (state.agents[name] && state.agents[name].status !== "failed") setChip(name, "done");
                 if (state.agents.Lead) state.agents.Lead.text = e.clarify ? `Asked: ${e.response}` : "Found the routes, sent the researchers, and checked for gaps.";
+                if (e.declined) return showClarify(e.response, e.options || []);
                 if (e.clarify) {
                     state.messages = [...state.messages, { role: "user", content: state.asked }, { role: "assistant", content: e.response }];
                     return showClarify(e.response, e.options || [], e.area);
