@@ -23,6 +23,9 @@ import tools  # noqa: E402
 
 DOCS = ROOT / "docs"
 NOT_A_CAUSE = "('Unspecified', 'Does Not Apply')"
+# Exact Poisson 95% bounds for counts 0 to 9 (tools.range_bounds), as DuckDB lists: DuckDB has no chi-square quantile
+EXACT_LOW = "[" + ", ".join(f"{tools.range_bounds(k)[0]:.1f}" for k in range(10)) + "]"
+EXACT_HIGH = "[" + ", ".join(f"{tools.range_bounds(k)[1]:.1f}" for k in range(10)) + "]"
 
 
 def routed(runs: list[dict]) -> list[dict]:
@@ -88,8 +91,8 @@ GROUP BY route ORDER BY risk;"""
     if run["map"]["hotspots"]:
         h = run["map"]["hotspots"][0]
         sql = f"""SELECT count(*) AS crashes_since_2021,
-       round(count(*) - 2 * sqrt(count(*)), 1) AS range_low,
-       round(count(*) + 2 * sqrt(count(*)), 1) AS range_high,
+       CASE WHEN count(*) < 10 THEN {EXACT_LOW}[count(*) + 1] ELSE round(count(*) - 2 * sqrt(count(*)), 1) END AS range_low,
+       CASE WHEN count(*) < 10 THEN {EXACT_HIGH}[count(*) + 1] ELSE round(count(*) + 2 * sqrt(count(*)), 1) END AS range_high,
        (SELECT round(crash_class_rate * mile_years, 1) FROM 'data/edges.parquet' WHERE edge_id = '{h['edge_id']}') AS similar_streets_expected,
        (SELECT contributing_factor_vehicle_1 FROM 'data/crash_locations.parquet' l2 JOIN 'data/crashes.parquet' c2 USING (collision_id)
         WHERE l2.edge_id = '{h['edge_id']}' AND contributing_factor_vehicle_1 NOT IN {NOT_A_CAUSE}

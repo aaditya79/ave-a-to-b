@@ -19,6 +19,7 @@ import pandas as pd
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra
 from scipy.spatial import cKDTree
+from scipy.stats import chi2
 
 from streets import street_key
 
@@ -135,10 +136,26 @@ def plain(value):
     return None if isinstance(value, float) and math.isnan(value) else value
 
 
+EXACT_BELOW = 10  # counts under this get the exact Poisson range; n ± 2 × √n is too rough for them
+
+
+def range_bounds(n):
+    """The 95% range for a count (a number or an array): the exact Poisson range for counts under 10
+    (0 gives 0 to 3.7), and n ± 2 × √n, floored at 0, from 10 up. Every range in the app comes from here."""
+    n = np.asarray(n, dtype=float)
+    with np.errstate(invalid="ignore"):
+        exact_low = np.where(n > 0, chi2.ppf(0.025, 2 * n) / 2, 0.0)
+        exact_high = chi2.ppf(0.975, 2 * n + 2) / 2
+    spread = 2 * np.sqrt(n)
+    low = np.where(n < EXACT_BELOW, exact_low, np.maximum(0.0, n - spread))
+    high = np.where(n < EXACT_BELOW, exact_high, n + spread)
+    return (float(low), float(high)) if low.ndim == 0 else (low, high)
+
+
 def count_range(n: float) -> dict:
-    """The approximate 95% range for a count: n ± 2 × √n, floored at 0."""
-    spread = 2 * math.sqrt(n)
-    return {"n": int(n), "low": round(max(0.0, n - spread), 1), "high": round(n + spread, 1)}
+    """A count with its 95% range (see range_bounds)."""
+    low, high = range_bounds(n)
+    return {"n": int(n), "low": round(low, 1), "high": round(high, 1)}
 
 
 # --- Geocoding ---
@@ -188,6 +205,17 @@ PLACES = [
     ("St. George Ferry Terminal", "Staten Island", 40.64366, -74.07355, ["st george", "st. george", "st george terminal"]),
     ("Citi Field", "Queens", 40.75710, -73.84584, []),
     ("Coney Island", "Brooklyn", 40.57549, -73.97046, []),
+    # Ends of the popular rides (build/b12_popular.py)
+    ("Battery Park", "Manhattan", 40.70330, -74.01700, ["the battery"]),
+    ("George Washington Bridge", "Manhattan", 40.85050, -73.94780, ["gwb", "gw bridge"]),
+    ("Harlem Meer", "Manhattan", 40.79670, -73.95200, []),
+    ("Grand Army Plaza", "Brooklyn", 40.67430, -73.97010, []),
+    ("Park Circle", "Brooklyn", 40.65130, -73.97230, []),
+    ("South Street Seaport", "Manhattan", 40.70640, -74.00300, ["seaport"]),
+    ("East 34th Street Ferry Landing", "Manhattan", 40.74430, -73.97180, []),
+    ("Bay Ridge 69th Street Pier", "Brooklyn", 40.63720, -74.03580, ["69th street pier"]),
+    ("Verrazzano-Narrows Bridge", "Brooklyn", 40.60850, -74.03800, ["verrazzano bridge", "verrazano bridge"]),
+    ("Brighton Beach", "Brooklyn", 40.57760, -73.96160, []),
 ]
 # Places people name that are outside the city's street and crash data: they resolve to "outside NYC".
 OUTSIDE = {"ewr": "Newark Airport", "newark": "Newark", "newark airport": "Newark Airport",
@@ -241,7 +269,7 @@ def suggest(text: str, limit: int = 5) -> list[dict]:
         return []
     hits = [(not title.lower().startswith(name), title, home) for title, home, *_ , aliases in PLACES
             if name in title.lower() or any(name in a for a in aliases)]
-    out = [{"label": title, "detail": home, "value": f"{title}, {home}"} for _, title, home in sorted(hits)]
+    out = [{"label": title, "detail": home, "value": f"{title}, {home}", "landmark": True} for _, title, home in sorted(hits)]
     if len(out) < limit and len(name) >= 3:
         key = text.strip().lower()
         if key not in _suggested:
@@ -575,13 +603,13 @@ LANE_NOTE = ("Compare lane types only within similar streets. Painted lanes sit 
 
 
 def _risk_range(positions: list[int], setting: str) -> tuple[float, float]:
-    """A route's risk with the n ± 2 × √n range of its expected crash count over the window, scaled."""
+    """A route's risk with the 95% range of its expected crash count over the window (range_bounds), scaled."""
     risk = RISK[setting][positions].sum()
     n = EXPECTED_COUNT[positions].sum()
     if n <= 0:
         return risk, risk
-    spread = 2 * math.sqrt(n)
-    return risk * max(0.0, n - spread) / n, risk * (n + spread) / n
+    low, high = range_bounds(n)
+    return risk * low / n, risk * high / n
 
 
 def _verdict(routes: list[list[int]]) -> dict:
@@ -889,12 +917,12 @@ def watch_out_tip(cause: str | None) -> str:
 
 @safe
 def standout_segments(edge_ids, limit: int = 5) -> dict:
-    """Segments whose whole crash range (n ± 2 × √n, since 2021) sits above the average for similar
+    """Segments whose whole crash range (range_bounds, since 2021) sits above the average for similar
     streets, busiest first. These are the only stretches the answer may single out."""
     ids = resolve(edge_ids)
     segments = edges.loc[list(dict.fromkeys(ids))]
     expected = segments.crash_class_rate * segments.mile_years
-    low = segments.crashes - 2 * np.sqrt(segments.crashes)
+    low = range_bounds(segments.crashes.to_numpy())[0]
     picked = segments[low > expected].sort_values("crashes", ascending=False).head(limit)
     every = crashes[crashes.edge_id.isin(picked.index)]
     spots = []
@@ -1001,7 +1029,7 @@ def area_summary(area: str) -> dict:
     # A street name is one corridor per borough: Broadway in Manhattan and Broadway in Queens are different streets
     streets = named.assign(expected=named.crash_class_rate * named.mile_years).groupby(["name", "borough"]).agg(
         crashes=("crashes", "sum"), expected=("expected", "sum"), miles=("length_mi", "sum"))
-    streets = streets[streets.crashes - 2 * np.sqrt(streets.crashes) > streets.expected]
+    streets = streets[range_bounds(streets.crashes.to_numpy())[0] > streets.expected.to_numpy()]
     top = streets.assign(excess=streets.crashes - streets.expected).sort_values("excess", ascending=False).head(3)
     change = round((rate / city - 1) * 100)
     return {

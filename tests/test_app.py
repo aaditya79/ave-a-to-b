@@ -58,7 +58,7 @@ def test_autocomplete_landmarks_work_when_geosearch_is_down(monkeypatch):
     monkeypatch.setattr(app.tools.httpx, "get", down)
     app.tools._suggested.clear()
     found = client.get("/autocomplete", params={"q": "Union"}).json()
-    assert found[0] == {"label": "Union Square", "detail": "Manhattan", "value": "Union Square, Manhattan"}
+    assert found[0] == {"label": "Union Square", "detail": "Manhattan", "value": "Union Square, Manhattan", "landmark": True}
     assert client.get("/autocomplete", params={"q": "u"}).json() == []
 
 
@@ -73,7 +73,7 @@ def test_autocomplete_adds_geosearch_and_stops_at_five(monkeypatch):
     app.tools._suggested.clear()
     found = client.get("/autocomplete", params={"q": "Union"}).json()
     assert len(found) == 5 and found[0]["label"] == "Union Square"
-    assert found[1] == {"label": "0 Union Street", "detail": "Brooklyn", "value": "0 Union Street, Brooklyn"}
+    assert found[1] == {"label": "0 Union Street", "detail": "Brooklyn", "value": "0 Union Street, Brooklyn"}  # an address: no landmark flag
 
 
 def test_route_endpoint_avoids_a_stretch():
@@ -264,7 +264,7 @@ def test_on_topic_followup_answers_from_existing_results(monkeypatch):
     seen = followup_setup(monkeypatch, "The Balanced route is 62% lower in crash risk because it uses protected lanes.")
     reply = ask_followup("Why is the balanced route safer?")
     assert reply["response"].startswith("The Balanced route") and not reply["declined"] and reply["rerun"] is None
-    assert reply["followups_left"] == 19 and reply["tool_calls"][0]["agent"] == "Follow-up"
+    assert reply["followups_left"] == app.MAX_FOLLOWUPS - 1 and reply["tool_calls"][0]["agent"] == "Follow-up"
     facts = json.loads(seen[0].split("RESULTS:\n", 1)[1].split("\n\nEarlier follow-ups", 1)[0])
     assert facts["routes"]["Balanced"]["crash_risk_vs_fastest"].startswith("62% lower")
     night = facts["routes"]["Fastest"]["crashes_by_time_of_day"]
@@ -469,3 +469,51 @@ def test_airport_codes_and_landmarks_resolve():
 def test_spelled_out_airport_names_resolve_to_the_short_label():
     assert app.tools.geocode("John F. Kennedy International Airport")["label"] == "JFK Airport, Queens"
     assert app.tools.geocode("Newark Liberty International Airport")["outside"] == "Newark Airport"
+
+
+# --- Cost: a repeat of the same trip within a day costs no model calls ---
+
+def test_a_repeated_trip_is_answered_from_the_cache(monkeypatch, tmp_path):
+    monkeypatch.setattr(app, "CACHE_FILE", tmp_path / "cache.json")
+    app.answer_cache.clear()
+    calls = []
+
+    async def fake_answer(question, hooks, trip=None):
+        calls.append(question)
+        return {"response": "Take the Balanced route.", "clarify": False, "answer": {"summary": []}, "map": {"routes": {}}}
+    monkeypatch.setattr(app, "answer", fake_answer)
+    q = "I bike from Columbia University to Union Square, Manhattan around 8am. Which route should I take?"
+    first = client.post("/chat", json={"message": q}).json()
+    again = client.post("/chat", json={"message": "  " + q.upper() + " "}).json()
+    assert len(calls) == 1 and first["cached_at"] is None and again["cached_at"]
+    assert again["response"] == first["response"]
+    assert q.lower() in (tmp_path / "cache.json").read_text().lower()  # the file copy, for a restart
+    app.answer_cache.clear(); app.load_cache()
+    assert app.cached(app.cache_key(q, None, None))
+
+
+def test_the_cache_skips_conversations_and_expires(monkeypatch, tmp_path):
+    monkeypatch.setattr(app, "CACHE_FILE", tmp_path / "cache.json")
+    assert app.cache_key("From Astoria to DUMBO", [{"role": "user", "content": "hi"}], None) is None
+    assert app.cache_key("Which way is safer?", None, app.Trip(start="Astoria", end="DUMBO")) is None
+    key = app.cache_key("I bike from A to B. Which route should I take?", None, None)
+    app.store(key, {"map": {"routes": {}}, "response": "x"}, [])
+    app.answer_cache[key]["at"] -= app.CACHE_SECONDS + 1
+    assert app.cached(key) is None
+    app.store(key, {"map": None, "response": "a clarifying question"}, [])
+    assert app.cached(key) is None  # only full route answers are kept
+
+
+def test_cost_caps():
+    assert app.QUESTIONS_PER_DAY == 100 and app.QUESTIONS_PER_HOUR == 30 and app.MAX_FOLLOWUPS == 10
+
+
+def test_a_cached_answer_doesnt_count_toward_the_daily_cap(monkeypatch):
+    monkeypatch.setattr(app, "day_count", {"day": None, "n": 0})
+    monkeypatch.setattr(app, "asked", {})
+    request = type("R", (), {"headers": {"x-forwarded-for": "1.2.3.4"}, "client": None})()
+    for _ in range(5):
+        assert app.over_limit(request, new=False) is None
+    assert app.day_count["n"] == 0
+    app.over_limit(request)
+    assert app.day_count["n"] == 1

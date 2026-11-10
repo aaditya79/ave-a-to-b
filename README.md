@@ -2,6 +2,10 @@
 
 Live: https://ave-a-to-b-929001279438.us-east1.run.app
 
+![Typing a trip, the results loading, picking a route, and avoiding a stretch](docs/images/demo.gif)
+
+*The demo replays a saved run of Columbia University to Union Square, so it calls no model. `build/demo_gif.py` records it.*
+
 ## 1. The agent and who it is for
 
 Ave A to B compares bike routes between two places in New York City. You enter a start, an end, and when you ride. A team of agents finds three routes (Fastest, Balanced, and Lowest risk), estimates serious crash risk on each after adjusting for how many people ride there, and shows what the safer route costs in minutes per day. It also names the stretches that stand out compared to similar streets, with their main crash cause, and checks what happened to crash counts after new bike lanes and street redesigns.
@@ -49,6 +53,9 @@ cd build
 ../.venv/bin/python b08_risk.py           # riders per day and crash risk per segment
 ../.venv/bin/python b09_before_after.py   # before and after for every new lane and project
 ../.venv/bin/python b10_explore.py        # simplified citywide layers for the map's explore mode
+../.venv/bin/python b11_method.py         # the "How we calculate risk" page, from one segment's numbers
+../.venv/bin/python b12_popular.py        # Popular rides: each ride on its OpenStreetMap path, with its numbers
+uv run --group build python b13_og.py     # og.png, the link preview image, drawn from a saved example
 ```
 
 An NYC Open Data app token in `NYC_OPEN_DATA_APP_TOKEN` raises the rate limit, but the scripts work without one. A full rebuild takes about an hour, mostly downloads.
@@ -111,6 +118,13 @@ These parts of the results page call code, with at most one small model call:
 - **Ride preview.** A button on the recommended route's card moves the camera along the route at a steady pace (about 45 seconds for 6 miles), with an orange dot for the rider. At each stretch to watch on that route it stops for about 2 seconds and shows the stretch, its crash count, and its watch-out tip. Pause, resume, and exit buttons (or Escape) control it, and the map key folds out of the way while it runs.
 - **Follow-up questions.** A box under the answer takes questions about the same trip, such as "Why is the Balanced route safer?", "What's the worst stretch?", or "What if I ride at night?". One model call with no tools answers from that trip's results, which code assembles: route minutes and risk, lane miles, crashes by time of day and by year, the stretches, and the before and after results. Nothing reruns. A question naming a different start or end comes back as a new trip, and the page runs the full comparison for it. If the follow-up lands on the other Cloud Run instance, which doesn't hold the session, the page sends the trip's two ends and code rebuilds the same results.
 
+- **Header.** Every page shares one header: `static/header.html`, `static/header.css`, and `static/header.js`, which the app puts into each page at a `<!--#header-->` marker. It is a black bar in the style of subway signage with the A → B logo (blue A, orange B) and three links: Explore the city, Popular rides, and How we calculate risk, with the current page's link underlined. Behind the right two-thirds is a white skyline outline at 15% opacity, an original line drawing of generic buildings with Empire State and Chrysler silhouettes, and a 4 px strip in subway colors runs along the bottom edge. Popular rides scrolls smoothly to its section. Explore the city scrolls to the top, turns explore mode on, and clears any selected ride or route. On a phone the links fold into a small Menu button, which closes on an outside tap, on Escape, or after a choice. A browser test checks that both pages have the same header markup, bullet colors, and links, with nothing above the bar.
+- **Big-number tiles.** Above the answer, three tiles sum up the recommended route: extra minutes each way against the fastest route, the change in crash risk against the fastest with its range, and miles on protected lanes or paths. The numbers are the ones on the route cards, rounded the same way.
+- **Popular rides.** A section under the trip form lists eight well-known rides: the Hudson River Greenway, the Central Park and Prospect Park loops, the Brooklyn Bridge Park Greenway, the East River Greenway, the Shore Parkway Greenway in Bay Ridge, the Ocean Parkway path, and the Williamsburg Bridge bike path. `build/b12_popular.py` routes each ride on its own path as mapped in OpenStreetMap: a bicycle route relation where one exists (the Hudson River and East River rides use the Manhattan Waterfront Greenway, relation 6729284), or the ways named for the path. The ride is the shortest way through those ways between its ends, so it can't stray onto nearby streets. A ride whose OSM path has a gap between its ends is left out of the list. Each card shows the same fields: the name, one line with miles, minutes at 9.5 mph, and one way or loop, the share on protected lanes or off-street paths (from the OSM tags), and a small drawing of the ride. Crashes on a path are often recorded on the street beside it, so a ride's count is every crash that hurt a cyclist since 2021 within 40 m of the ride, on the path or the streets along or beside it, with its 95% range and the rate per mile per year. A ride that is mostly on streets would also get the similar-streets badge the routes use, and only when its whole range sits above or below the expectation. All eight are at least half protected or off-street, so none has a badge. Clicking a card draws the ride on the map and opens its details in one panel under the grid, so the grid stays even. Clicking the card again, the × button, or Escape closes it and clears the map. Ride here fills From and To. Tests recount every number from the data, check that each drawn ride lies on its OSM ways, and check that no card says "safest" or "tourist friendly".
+- **How we calculate risk.** A page linked from the header walks through one worked example on Central Park South, a 0.16-mile collector street with no bike lane: 10 crashes since 2021 with a range of 3.7 to 16.3, about 2.9 expected on similar streets, the blended estimate of 9.5 crashes per mile per year when the segment's own data gets 80% of the weight, about 1,090 riders a day, and 23.7 crashes per million miles ridden (11.9 and 94.9 at the other two rider settings). `build/b11_method.py` writes the page from the data, and a test rebuilds it and checks that the page matches. The segment ID and data sources are in a Sources drawer at the bottom.
+- **Landmark badge.** In the From and To suggestions, built-in places carry a green Landmark pill next to their borough. Addresses from NYC GeoSearch show only the borough.
+- **Link previews.** Open Graph and Twitter tags point to a 1200 × 630 image with the logo, "Which way should I bike?", and a small map of the three routes from the Prospect Heights to DUMBO example. The favicon is the A and B bullets.
+
 Each route type keeps one color everywhere: blue for Fastest, pink for Balanced, and dark slate for Lowest risk. The recommended route gets a badge and a thicker line. Clicking a card under New lanes and redesigns zooms the map to that project's street segments and highlights them.
 
 ### Guardrails
@@ -123,7 +137,7 @@ The app answers questions about biking in New York City, its streets and crash d
 
 A question that names two or more places is never off-topic, even if it doesn't mention bikes. "Is LGA closer to JFK than Newark?" is a distance question: the Lead calls `route_options` for each pair, and code writes the answer with the bike miles and minutes on the fastest route, says plainly that Newark is outside the city's street and crash data, makes no claim about whether bikes are allowed on airport roads, and offers the full comparison as a quick reply. Airport codes and common landmarks (LGA, JFK, Penn Station, Grand Central, Barclays Center, and others) are in the built-in places list, and EWR, Newark, Jersey City, and Hoboken resolve to "outside NYC". If the Lead still calls such a message off-topic, code sends it back once with the places it found.
 
-The Lead turns away off-topic questions in one sentence, with an on-topic example, and never gives personal odds, legal or medical advice, or anything about a private person. Rate limits (30 questions per visitor per hour, 300 per day) apply on top, and follow-ups count toward them. Each trip allows 20 follow-ups.
+The Lead turns away off-topic questions in one sentence, with an on-topic example, and never gives personal odds, legal or medical advice, or anything about a private person. Rate limits apply on top: 30 questions per visitor per hour, and 100 new trips a day across all visitors, with follow-ups counted. Each trip allows 10 follow-ups. The same trip asked again within 24 hours (the same From, To, and time) is answered from a cache in memory and in a small file on the container, with no model calls, and the page says when that answer first ran. The example chips replay saved runs and never call a model.
 
 `build/guardrail_checks.py` sends each case below to the live site, to `/chat` and to `/followup`, and writes [docs/guardrails.md](docs/guardrails.md). The latest run passed 18 of 18:
 
@@ -149,6 +163,9 @@ The Lead turns away off-topic questions in one sentence, with an on-topic exampl
 | False positives | 23 casual on-topic questions, such as "ignore the park, what's fastest?", "forget the last route, try from Harlem", "pretend I'm on an e-bike", "act like it's night" (full list in `tests/test_app.py`) | None blocked by the guard | 0 of 23 blocked | Pass |
 
 Unit tests in `tests/test_app.py` cover the same rules with the model replaced by a script, for both the question and the follow-ups: injections are declined before the Lead runs, questions that only mention rules ("What if I ignore the bike lane rules?") go through, 23 casual on-topic questions are never blocked while every known attack still is, long messages are declined, and an off-topic reply comes back as a one-sentence refusal.
+
+
+**Errors.** No exception text reaches the page. If anything fails in `/chat`, `/run`, or `/followup`, the server logs the full traceback and the page shows "Something went wrong on our side while comparing routes. Please try again." with a Retry button. A test forces an exception and checks that only the friendly message comes back. Another test runs every Popular rides trip through `/run` with the models stubbed, so the full pipeline is exercised without any model cost.
 
 ### Exact numbers come from code
 
@@ -194,12 +211,14 @@ Staten Island has no bike link to the rest of the city in this network. A trip t
 3. **Riders per day.** Citi Bike trip starts and ends in a segment's H3 cell (about 0.1 square miles) and its neighbors say how busy an area is. The median ratio of counted riders to Citi Bike activity at 8 DOT street counters, 12.43, turns that into riders per day. Segments with no Citi Bike data nearby (5,342 of 8,203 miles, including all of Staten Island) use the median of their similar-streets group, and any route that uses them is marked lower confidence.
 4. **Rider share.** Counters sit on streets with good lanes, so a share is assumed for other streets: protected lanes and paths 1.0, painted lanes 0.75, shared lanes 0.5, and no lane 0.125 to 0.25. This is an assumption, so every route is scored at half, the assumed value, and double the gap between streets.
 5. **Route risk** is the sum over segments of expected crashes per year divided by riders. The agent only compares routes with it, as "about 62% lower than the Fastest route", and never quotes it as anyone's odds.
-6. **Safety label.** Each route gets a range: risk × (n ± 2 × √n) / n, where n is its expected crash count over the window.
+6. **Safety label.** Each route gets a range: risk × (the 95% range of n) / n, where n is its expected crash count over the window (see Ranges below).
    - "Safest of these three routes": one route has the lowest risk at all three settings and its range sits below every other route's.
    - "Depends on assumptions": two routes swap places between settings, with ranges apart both times.
    - "About equally safe": anything else. The faster of the routes tied with the lowest is recommended.
 
-A stretch "stands out compared to similar streets" only when its whole crash range, n ± 2 × √n floored at 0, sits above the expected count for similar streets. At most five are listed.
+**Ranges.** Every crash count comes with a 95% range from one function, `tools.range_bounds`. From 10 crashes up it is n ± 2 × √n, floored at 0. Below 10 that shortcut is too rough (it would give 0 crashes a range of 0 to 0), so small counts get the exact Poisson range: 0 crashes gives 0 to 3.7, 2 gives 0.2 to 7.2, and 5 gives 1.6 to 11.7. The route ranges, the stretches that stand out, the area answers, the explore corridors, the risk page, and Popular rides all use it, and `build/verify_samples.py` reproduces it in SQL with a lookup of the exact bounds for 0 to 9.
+
+A stretch "stands out compared to similar streets" only when its whole crash range sits above the expected count for similar streets. At most five are listed.
 
 ### Before and after
 
@@ -216,6 +235,7 @@ For each new lane (named by its street) and each Street Improvement Project fini
 - **E-bike trends.** NYPD changed how it labels e-bike and moped riders in 2024 and 2025, so e-bike counts aren't comparable across years.
 - **Single stretches with few crashes.** When a route has too few crashes for conclusions about single stretches, the answer says so and compares the routes as a whole.
 - **Hills, signals, and pavement.** Travel time assumes 9.5 mph on flat ground.
+- **Crashes beside a path.** A Popular ride's count includes crashes on streets within 40 m, since crashes on a path are often recorded on the street beside it. That can count a crash on a cross street or a parallel road that never touched the path, so these counts describe the corridor, not the path alone.
 
 ## 5. Sample queries
 

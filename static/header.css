@@ -1,0 +1,31 @@
+/* The shared header: subway-signage black bar, A and B bullets, a faint skyline, and a subway-color strip.
+   Used by every page (static/header.html is inserted by app.py), so all pages match. */
+html, body { margin: 0; }
+.signbar { height: 64px; margin: 0; background: #111; box-sizing: border-box; overflow: hidden; color: #fff; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 28px 4px 32px; position: relative; z-index: 1200; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
+.sign-skyline { position: absolute; right: 0; bottom: 4px; width: 67%; height: 52px; opacity: 0.15; pointer-events: none; z-index: 0;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 25%); mask-image: linear-gradient(to right, transparent, #000 25%); }
+.sign-strip { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; z-index: 1;
+    background: linear-gradient(to right, #0039a6 0 11.1%, #ff6319 0 22.2%, #6cbe45 0 33.3%, #00933c 0 44.4%, #fccc0a 0 55.5%, #ee352e 0 66.6%, #b933ad 0 77.7%, #a7a9ac 0 88.8%, #996633 0); }
+.sign-brand, .sign-links, .sign-menu { position: relative; z-index: 2; }
+.sign-menu { display: none; }
+.sign-brand { display: flex; align-items: center; gap: 8px; color: #fff; text-decoration: none; flex: none; }
+.sign-bullet { width: 30px; height: 30px; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px; line-height: 1; color: #fff; }
+.sign-bullet.sign-a { background: #0039a6; }
+.sign-bullet.sign-b { background: #ff6319; }
+.sign-arrow { font-size: 20px; font-weight: 700; line-height: 1; }
+.sign-name { font-weight: 700; font-size: 24px; line-height: 1; letter-spacing: -0.01em; margin-left: 6px; }
+.sign-links { display: flex; gap: 28px; align-items: center; }
+.sign-links a { color: #fff; font-weight: 700; font-size: 16px; line-height: 1; text-decoration: none; padding: 6px 0; border-bottom: 2px solid transparent; white-space: nowrap; text-shadow: 0 1px 2px #111; }
+.sign-links a:hover, .sign-links a:focus-visible { border-bottom-color: rgba(255, 255, 255, 0.6); outline: none; }
+.sign-links a[aria-current="page"] { border-bottom-color: #fff; }
+@media (max-width: 960px) {
+    .signbar { height: 56px; padding: 0 14px 4px 16px; gap: 10px; }
+    .sign-skyline { height: 44px; width: 70%; }
+    .sign-bullet { width: 26px; height: 26px; font-size: 16px; }
+    .sign-name { display: none; }
+    .sign-links { display: none; position: fixed; top: 56px; right: 8px; flex-direction: column; align-items: stretch; gap: 0; background: #111; border-radius: 0 0 10px 10px; padding: 6px 0; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3); z-index: 1300; }
+    .sign-links.open { display: flex; }
+    .sign-links a { padding: 12px 18px; font-size: 15px; border-bottom: 0; border-left: 3px solid transparent; }
+    .sign-links a[aria-current="page"] { border-left-color: #fff; }
+    .sign-menu { display: inline-flex; align-items: center; gap: 6px; background: #111; border: 1px solid rgba(255, 255, 255, 0.6); color: #fff; border-radius: 8px; padding: 6px 10px; font: 700 14px "Helvetica Neue", Helvetica, Arial, sans-serif; cursor: pointer; }
+}

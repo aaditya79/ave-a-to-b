@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>How we calculate risk</title>
+<meta name="description" content="One worked example, on Central Park South, of how Ave A to B turns crash counts and rider estimates into risk per mile ridden." />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/static/header.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root { --blue: #0039a6; --orange: #ff6319; --navy: #0b1f3a; --muted: #4b5767; --bg: #f1f2f4; --card: #fff; --line: #dce0e5; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { font-family: Inter, system-ui, -apple-system, sans-serif; font-size: 17px; line-height: 1.6; color: var(--navy); background: var(--bg); }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 32px; line-height: 1.2; margin: 0 0 8px; letter-spacing: -0.02em; }
+  .lede { color: var(--muted); margin: 0 0 24px; }
+  section { background: var(--card); border-radius: 12px; box-shadow: 0 1px 2px rgba(11,31,58,.06), 0 4px 16px rgba(11,31,58,.06); padding: 18px 22px; margin: 0 0 14px; }
+  h2 { font-size: 19px; margin: 0 0 6px; display: flex; gap: 10px; align-items: baseline; }
+  h2 span { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--navy); color: #fff; font-size: 14px; display: inline-grid; place-items: center; }
+  p { margin: 6px 0; }
+  .num { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .calc { font-family: ui-monospace, Menlo, monospace; font-size: 15px; background: #f6f7f9; border-radius: 8px; padding: 8px 12px; margin: 8px 0 2px; overflow-x: auto; white-space: nowrap; }
+  .note { font-size: 15px; color: var(--muted); }
+  details.sources { margin-top: 18px; font-size: 15px; color: var(--muted); }
+  details.sources summary { cursor: pointer; font-weight: 600; color: var(--navy); }
+  details.sources ul { margin: 8px 0 0; padding-left: 20px; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
+  @media (max-width: 640px) { .calc { white-space: normal; overflow-wrap: anywhere; } h1 { font-size: 26px; } section { padding: 16px; } }
+</style>
+</head>
+<body>
+<!--#header-->
+<script src="/static/header.js"></script>
+<main>
+<h1>How we calculate risk</h1>
+<p class="lede">One worked example, on one street segment from the data: Central Park South in Manhattan, a 0.16-mile stretch of a collector street with no bike lane. Every number below comes from the same data the agents use.</p>
+
+<section>
+<h2><span>1</span>Count the crashes</h2>
+<p>Police reported <span class="num">10</span> crashes that hurt a cyclist on this segment since January 2021, over about 5.8 years. 1 left a cyclist seriously hurt or killed.</p>
+<p>A count this small moves a lot by chance, so we give it a 95% range: n ± 2 × √n from 10 crashes up, and the exact range for a count of rare events below 10 (0 crashes gives 0 to 3.7).</p>
+<div class="calc">10 ± 2 × √10 = 3.7 to 16.3 crashes</div>
+<p>Its own rate is 10 crashes over 0.91 mile-years (0.16 miles × 5.8 years), about <span class="num">11.0</span> crashes per mile per year.</p>
+</section>
+
+<section>
+<h2><span>2</span>Compare with similar streets</h2>
+<p>"Similar streets" are the same kind of street in the same borough: a collector street with no bike lane in Manhattan. There are 1,638 such segments, 93.6 miles in all.</p>
+<p>Together they average <span class="num">3.2</span> crashes per mile per year. At that rate this segment would have about <span class="num">2.9</span> crashes since 2021, against the 10 it had.</p>
+<div class="calc">3.2 × 0.91 mile-years = 2.9 expected</div>
+<p>Even the low end of its range, 3.7, is above 2.9, so this segment stands out from similar streets beyond chance. That is the test every "stretch to watch out for" passes.</p>
+</section>
+
+<section>
+<h2><span>3</span>Blend the two</h2>
+<p>A short segment has little data of its own, so its rate is pulled toward the similar-street average. How far depends on how much data it has and how much true rates vary between similar streets. Here the segment's own data gets <span class="num">80%</span> of the weight.</p>
+<div class="calc">80% × 11.0 + 20% × 3.2 ≈ 9.5 crashes per mile per year</div>
+<p>This blended estimate, <span class="num">9.5</span>, is what the routes use. A quiet one-block street with one crash stays close to its similar streets, and a long one with plenty of crashes keeps close to its own count.</p>
+</section>
+
+<section>
+<h2><span>4</span>Estimate how many people ride it</h2>
+<p>Crashes alone favor empty streets, so we divide by an estimate of riders. Citi Bike trips nearby, scaled by the city's bike counters, give about <span class="num">1,090</span> riders a day for this segment.</p>
+<p>Nobody counts riders on most streets without bike lanes, so the share of riders a street like this carries is an assumption. We redo the math at half and at double that assumed gap between streets with and without lanes.</p>
+</section>
+
+<section>
+<h2><span>5</span>Risk per mile ridden, with its range</h2>
+<p>Divide the blended crashes by the miles people ride here in a year:</p>
+<div class="calc">9.5 ÷ (1,090 riders × 365 days) × 1,000,000 ≈ 23.7 crashes per million miles ridden</div>
+<p>At the other two rider settings it is <span class="num">11.9</span> and <span class="num">94.9</span> per million miles ridden. Routes add this up along every segment, and a route is only called the safest of these three routes when it has the lowest risk at all three settings and its range doesn't overlap the others.</p>
+<p class="note">These numbers compare streets and routes. They are not anyone's personal odds, and they count only crashes the police recorded.</p>
+</section>
+
+<details class="sources">
+<summary>Sources</summary>
+<ul>
+<li>Street segment <code>42430394-4347534767-0</code> in <code>data/edges.parquet</code>: crashes, mile-years, the similar-streets rate, the weight, and riders a day.</li>
+<li>Crashes: NYPD Motor Vehicle Collisions on NYC Open Data, since January 2021, matched to the nearest street segment.</li>
+<li>Riders: Citi Bike trip data, scaled by NYC DOT bike counters.</li>
+<li>The full method, with the formulas, is in the project README.</li>
+</ul>
+</details>
+</main>
+</body>
+</html>

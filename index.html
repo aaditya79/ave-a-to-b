@@ -3,6 +3,19 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="Ave A to B" />
+        <meta property="og:title" content="Ave A to B: which way should I bike?" />
+        <meta property="og:description" content="Compare three NYC bike routes by time and crash risk, with the stretches to watch out for." />
+        <meta property="og:image" content="https://ave-a-to-b-929001279438.us-east1.run.app/og.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta property="og:url" content="https://ave-a-to-b-929001279438.us-east1.run.app/" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="Ave A to B: which way should I bike?" />
+        <meta name="twitter:description" content="Compare three NYC bike routes by time and crash risk, with the stretches to watch out for." />
+        <meta name="twitter:image" content="https://ave-a-to-b-929001279438.us-east1.run.app/og.png" />
+        <link rel="stylesheet" href="/static/header.css" />
         <title>Ave A to B</title>
         <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='10' cy='16' r='9' fill='%230039A6'/%3E%3Ccircle cx='22' cy='16' r='9' fill='%23FF6319'/%3E%3Ctext x='10' y='20' font-family='Helvetica,Arial,sans-serif' font-size='11' font-weight='700' fill='white' text-anchor='middle'%3EA%3C/text%3E%3Ctext x='22' y='20' font-family='Helvetica,Arial,sans-serif' font-size='11' font-weight='700' fill='white' text-anchor='middle'%3EB%3C/text%3E%3C/svg%3E" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -82,28 +95,6 @@
             .small { font-size: 14px; color: var(--muted); }
             .hidden { display: none !important; }
 
-            /* --- Header bar, in the style of subway signage --- */
-            .signbar { height: 64px; margin: 0; background: #111; color: #fff; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 28px 0 32px; position: relative; z-index: 1200; font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; }
-            .sign-brand { display: flex; align-items: center; gap: 8px; color: #fff; text-decoration: none; flex: none; }
-            .sign-bullet { width: 30px; height: 30px; flex: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px; line-height: 1; color: #fff; }
-            .sign-bullet.a { background: var(--blue); }
-            .sign-bullet.b { background: var(--orange); }
-            .sign-arrow { font-size: 20px; font-weight: 700; line-height: 1; }
-            .sign-name { font-weight: 700; font-size: 24px; line-height: 1; letter-spacing: -0.01em; margin-left: 6px; }
-            .sign-links { display: flex; gap: 28px; align-items: center; }
-            .sign-links a { color: #fff; font-weight: 700; font-size: 16px; line-height: 1; text-decoration: none; padding: 6px 0; border-bottom: 2px solid transparent; white-space: nowrap; }
-            .sign-links a:hover, .sign-links a:focus-visible { border-bottom-color: #fff; outline: none; }
-            .sign-links .short { display: none; }
-            @media (max-width: 960px) {
-                .signbar { height: 56px; padding: 0 14px 0 16px; gap: 10px; }
-                .sign-bullet { width: 26px; height: 26px; font-size: 16px; }
-                .sign-name { display: none; }
-                .sign-links { gap: 16px; }
-                .sign-links a { font-size: 14px; }
-                .sign-links .long { display: none; }
-                .sign-links .short { display: inline; }
-            }
-
             /* --- Hero --- */
             .hero-title { font-size: 30px; line-height: 1.15; margin: 0 0 6px; letter-spacing: -0.02em; font-weight: 700; }
             .hero-sub { margin: 0; color: var(--muted); font-size: 16px; }
@@ -130,6 +121,34 @@
             .saved-map-tag { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); z-index: 650; background: #5c4100; color: #fff; font-size: 13px; font-weight: 600; padding: 4px 12px; border-radius: 999px; pointer-events: none; }
             .app.saved #summary, .app.saved .card.route, .app.saved #traceCard { outline: 2px dashed #e0b84d; outline-offset: -2px; }
             @media (max-width: 960px) { .saved-map-tag { top: auto; bottom: 28px; } }
+
+            /* --- Big-number tiles for the recommended route --- */
+            .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+            .tile { background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow); padding: 14px 16px; border-left: 5px solid var(--route-color, var(--blue)); min-width: 0; }
+            .tile .big { font-size: 34px; font-weight: 700; line-height: 1.05; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+            .tile .big small { font-size: 16px; font-weight: 600; margin-left: 3px; }
+            .tile .what { font-size: 14px; font-weight: 600; margin-top: 6px; }
+            .tile .sub { font-size: 13px; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+            .tiles-head { grid-column: 1 / -1; font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); display: flex; align-items: center; gap: 8px; }
+            .tiles-head i { width: 10px; height: 10px; border-radius: 50%; background: var(--route-color, var(--blue)); }
+            @media (max-width: 960px) { .tiles { gap: 8px; } .tile { padding: 10px 10px; border-left-width: 4px; } .tile .big { font-size: 24px; } .tile .big small { font-size: 13px; } .tile .what { font-size: 13px; } }
+
+            /* --- Popular rides: even cards, details in one panel under the grid --- */
+            .ride-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+            .ride { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; background: #fff; text-align: left; display: grid; grid-template-columns: 1fr 72px; grid-template-rows: auto auto 1fr; column-gap: 10px; row-gap: 3px; height: 112px; box-sizing: border-box; overflow: hidden; font: inherit; color: inherit; }
+            .ride:hover, .ride.active { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue-soft); }
+            .ride h3 { margin: 0; font-size: 15px; line-height: 1.25; grid-column: 1; }
+            .ride .meta { font-size: 13px; color: var(--muted); grid-column: 1; }
+            .ride .tag { grid-column: 1; align-self: end; justify-self: start; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #eef1f5; color: var(--navy); white-space: nowrap; }
+            .ride .tag.badge { background: var(--navy); color: #fff; }
+            .ride svg { grid-column: 2; grid-row: 1 / 4; align-self: center; width: 72px; height: 44px; }
+            .ride-detail { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: #fff; position: relative; display: grid; gap: 6px; font-size: 14px; }
+            .ride-detail h3 { margin: 0 32px 2px 0; font-size: 17px; }
+            .ride-detail .close { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; border-radius: 8px; border: 0; background: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); }
+            .ride-detail .close:hover { background: var(--blue-soft); color: var(--navy); }
+            .ride-detail ul { margin: 2px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+            .ride-detail .facts { margin: 0; padding-left: 18px; }
+            .ride-detail .btn { justify-self: start; margin-top: 4px; }
 
             /* --- Loading moment --- */
             .loader { display: flex; align-items: center; gap: 10px; margin: 2px 0 12px; }
@@ -193,6 +212,8 @@
             ul.suggest li { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; gap: 12px; }
             ul.suggest li span { overflow-wrap: anywhere; }
             ul.suggest li small { color: var(--faint); flex: none; }
+            ul.suggest li .where { flex: none; display: inline-flex; align-items: center; gap: 6px; }
+            ul.suggest li .landmark { background: #00933c; color: #fff; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; letter-spacing: 0.02em; }
             ul.suggest li.active, ul.suggest li:hover { background: var(--blue-soft); }
 
             /* --- Progress strip and agent chips --- */
@@ -394,15 +415,8 @@
         </style>
     </head>
     <body>
-        <header class="signbar">
-            <a class="sign-brand" href="/" aria-label="Ave A to B, home">
-                <span class="sign-bullet a">A</span><span class="sign-arrow" aria-hidden="true">→</span><span class="sign-bullet b">B</span>
-                <span class="sign-name">Ave A to B</span>
-            </a>
-            <nav class="sign-links" aria-label="Sections">
-                <a href="/?explore=1" id="navExplore"><span class="long">Explore the city</span><span class="short">Explore</span></a>
-            </nav>
-        </header>
+        <!--#header-->
+        <script src="/static/header.js"></script>
         <div class="app" id="app">
             <div class="panel" id="panel">
 
@@ -506,6 +520,7 @@
                     <span id="savedText"></span>
                     <button class="btn small" type="button" id="savedRerun">Run a fresh one</button>
                 </section>
+                <section class="tiles hidden" id="tiles" aria-label="The recommended route at a glance"></section>
                 <section class="card hidden" id="summary"></section>
                 <div id="routeCards" style="display: grid; gap: 16px"></div>
 
@@ -535,6 +550,13 @@
                         <button class="btn" id="followGo" type="button" style="flex: none">Ask</button>
                     </div>
                     <p class="small" id="followLeft" style="margin: 8px 0 0"></p>
+                </section>
+
+                <section class="card popular" id="popular">
+                    <h2>Popular rides</h2>
+                    <p class="small" style="margin-top: 0">Well-known rides on their own paths, with numbers from the same crash data. Click one to see it on the map.</p>
+                    <div class="ride-list" id="rideList"><p class="small">Loading…</p></div>
+                    <div class="ride-detail hidden" id="rideDetail" role="region" aria-live="polite"></div>
                 </section>
 
                 <section class="card hidden" id="traceCard">
@@ -606,7 +628,7 @@
                 timing: "Police-reported crashes that hurt a cyclist on this route's streets since 2021. A busy hour has more riders as well as more crashes, so these show when crashes happen, not your odds at that hour. The latest year is partial, shown as a hollow dot and scaled to a full year for the trend.",
                 risk: "Expected police-reported bike crashes for each mile ridden on this route, compared with the fastest route. \"62% lower\" means about 0.38 times the fastest route's risk. It compares routes. It is not your personal odds.",
                 range: "Nobody counts riders on most streets, so we estimate how many use streets without bike lanes. We redo the math at half and at double that estimate. The range shows the lowest and highest result.",
-                count: "Crash counts go up and down by chance. The range is the count plus or minus two times its square root, which covers most of that chance variation.",
+                count: "Crash counts go up and down by chance. The range covers 95% of that chance variation: the count plus or minus two times its square root, or for counts under 10, the exact range for a count of rare events (0 crashes gives 0 to 3.7).",
                 similar: "Streets with the same kind of bike lane and the same type of road in the same borough. Comparing with them keeps a busy avenue from being judged against a quiet side street.",
                 equal: "The difference in risk between these routes is smaller than the uncertainty in the data, so we recommend the faster one.",
                 depends: "Which route has lower risk flips depending on how many riders we assume use streets without bike lanes. The data can't settle it, so no route is called safest.",
@@ -1538,6 +1560,29 @@
                     el("p", { class: "headline" }, data.headline),
                     answer?.summary?.length ? el("p", { class: "support" }, ...sentences(answer.summary)) : null].filter(Boolean));
             }
+            // Three big numbers for the recommended route, from the same fields as its card
+            function showTiles() {
+                const data = state.map;
+                const r = distinctRoutes(data).find((x) => isRecommended(x)) || distinctRoutes(data)[0];
+                if (!r) return;
+                const fastest = r.keys.includes("fastest");
+                const fastestRoute = distinctRoutes(data).find((x) => x.keys.includes("fastest"));
+                const extra = Math.max(0, r.extra_minutes_vs_fastest);
+                const risk = r.relative_risk_vs_fastest;
+                const change = Math.round((1 - risk.assumed) * 100);
+                const lane = (r.miles_by_lane.protected || 0) + (r.miles_by_lane.path || 0);
+                const total = Object.values(r.miles_by_lane).reduce((a, b) => a + b, 0);
+                const tile = (num, unit, what, sub) => el("div", { class: "tile" }, el("div", { class: "big" }, num, unit ? el("small", {}, unit) : null), el("div", { class: "what" }, what), el("div", { class: "sub" }, sub));
+                $("tiles").style.setProperty("--route-color", state.colors[r.route_ref]);
+                $("tiles").replaceChildren(
+                    el("div", { class: "tiles-head" }, el("i"), `${nameOf(r)} route, recommended`),
+                    fastest ? tile("0", "min", "extra each way", "This is the fastest route.")
+                        : tile(`+${extra < 10 ? extra.toFixed(1) : Math.round(extra)}`, "min", "extra each way", (() => { const m = (x) => (extra < 10 ? x.toFixed(1).replace(/\.0$/, "") : Math.round(x)); return `${m(r.minutes)} min in all, against ${m(fastestRoute?.minutes ?? r.minutes - extra)} for the fastest`; })()),
+                    fastest ? tile("Same", "", "crash risk as the fastest", "It is the fastest route.")
+                        : tile(change === 0 ? "Same" : `${Math.abs(change)}%`, "", change === 0 ? "crash risk as the fastest" : `${change > 0 ? "lower" : "higher"} crash risk than the fastest`, `Range: ${pct(risk.half)} to ${pct(risk.double)}`),
+                    tile(lane.toFixed(1), "mi", "on protected lanes or paths", `of ${total.toFixed(1)} miles in all`));
+                $("tiles").classList.remove("hidden");
+            }
             function summarySkeleton() {
                 $("summary").classList.remove("hidden");
                 $("summary").replaceChildren(el("h2", { style: "margin:0" }, "Our recommendation"), el("p", { class: "headline" }, state.map.headline),
@@ -1618,8 +1663,9 @@
                 if (keepSession && prior) Object.assign(state, { session: prior.session, trip: prior.trip, messages: prior.messages, context: prior.context });
                 closeTip();
                 for (const layer of [routeLayer, projectLayer, sliderLayer, labelLayer, spotLayer, pinLayer]) layer.clearLayers();
+                if (typeof closeRide === "function") closeRide();
                 $("legendProject").classList.add("hidden");
-                for (const id of ["summary", "sliderBox", "spots", "changes", "notes", "limits", "followup", "clarify", "errorBox", "legend"]) $(id).classList.add("hidden");
+                for (const id of ["tiles", "summary", "sliderBox", "spots", "changes", "notes", "limits", "followup", "clarify", "errorBox", "legend"]) $(id).classList.add("hidden");
                 $("app").classList.remove("has-results");
                 $("routeCards").replaceChildren();
                 $("agents").replaceChildren();
@@ -1658,7 +1704,7 @@
                 if (state.context) params.set("context", JSON.stringify(state.context));
                 source = new EventSource("/run?" + params);
                 source.onmessage = (msg) => onEvent(JSON.parse(msg.data));
-                source.onerror = () => fail("Lost the connection to the server. Please try again.");
+                source.onerror = () => fail("Lost the connection to the server. Please try again.", true);
                 $("progress").scrollIntoView({ behavior: "smooth", block: "nearest" });
             }
             function busy(on) {
@@ -1682,6 +1728,7 @@
                 if (e.type === "start") state.session = e.session_id;
                 else if (e.type === "routes") {
                     showRoutes(e.data);
+                    showTiles();
                     summarySkeleton();
                 } else if (e.type === "researcher") {
                     if (e.status === "running") {
@@ -1698,7 +1745,7 @@
                 else if (e.type === "progress") onProgress(e);
                 else if (e.type === "handoff") onHandoff(e);
                 else if (e.type === "done") onDone(e);
-                else if (e.type === "error") fail(e.message);
+                else if (e.type === "error") fail(e.message, e.retry);
             }
             // --- The loading moment: one line per step, with the counts from this run once each step finishes ---
             const fmt = (n) => Number(n).toLocaleString("en-US");
@@ -1758,6 +1805,11 @@
                 busy(false);
                 clearInterval(timer);
                 setStep("done");
+                if (e.cached_at) {
+                    // The same trip ran in the last 24 hours: say so, with when it ran
+                    const at = new Date(e.cached_at * 1000).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+                    $("timer").textContent = `reused the answer from ${at} for this same trip`;
+                }
                 $("progress").classList.add("finished");
                 // A clarifying question or a declined message skips the route steps
                 for (const li of document.querySelectorAll("#statusLines li")) if (!li.classList.contains("done")) li.className = e.map ? "done" : "skipped";
@@ -1838,11 +1890,14 @@
             $("followGo").addEventListener("click", () => sendFollowup($("followQ").value));
             $("followQ").addEventListener("keydown", (e) => e.key === "Enter" && sendFollowup($("followQ").value));
 
-            function fail(message) {
+            function fail(message, retry = false) {
                 if (source) source.close();
                 busy(false);
                 clearInterval(timer);
-                $("errorBox").textContent = message;
+                const again = { message: state.asked, trip: state.trip, context: state.context };
+                $("errorBox").replaceChildren(el("p", { style: "margin:0" }, message),
+                    retry && again.message ? el("button", { class: "btn small", type: "button", id: "retryRun", style: "margin-top:10px",
+                        onclick: () => ask(again.message, { trip: again.trip, context: again.context }) }, "Retry") : null);
                 $("errorBox").classList.remove("hidden");
                 $("summary").classList.add("hidden");
             }
@@ -1900,7 +1955,8 @@
                     list.replaceChildren(...items.map((item, i) => el("li", { class: i === active ? "active" : "", role: "option", id: `${list.id}-${i}`, "aria-selected": i === active ? "true" : "false",
                             // mousedown, not click: it fires before the input loses focus
                             onmousedown: (e) => { e.preventDefault(); choose(item); } },
-                        el("span", {}, item.label), item.detail ? el("small", {}, item.detail) : null)));
+                        el("span", {}, item.label),
+                        el("span", { class: "where" }, item.landmark ? el("b", { class: "landmark" }, "Landmark") : null, item.detail ? el("small", {}, item.detail) : null))));
                     list.classList.toggle("hidden", !open());
                     input.setAttribute("aria-expanded", open() ? "true" : "false");
                     if (active >= 0) input.setAttribute("aria-activedescendant", `${list.id}-${active}`);
@@ -1957,11 +2013,108 @@
                 $("statRoutes").textContent = s.routes_per_trip;
             }).catch(() => $("statStrip").classList.add("hidden"));
 
-            // Header link: bring the city layers back, from any state of the page
+            // --- Popular rides: precomputed in the build. A card draws its ride and opens its details under the grid;
+            // clicking it again, the close button, or Escape clears it. Ride here fills From and To. ---
+            const rideLayer = L.layerGroup().addTo(map);
+            let rides = [], openRide = null;
+            const RIDE_BADGE = { "fewer crashes than similar streets": "Fewer crashes than similar streets", "more crashes than similar streets": "More crashes than similar streets" };
+            const SVG_NS = "http://www.w3.org/2000/svg";
+            function rideThumb(d) {
+                const svg = document.createElementNS(SVG_NS, "svg");
+                svg.setAttribute("viewBox", "0 0 120 72");
+                svg.setAttribute("aria-hidden", "true");
+                const path = document.createElementNS(SVG_NS, "path");
+                Object.entries({ d, fill: "none", stroke: "#0b1f3a", "stroke-width": 3, "stroke-linecap": "round", "stroke-linejoin": "round" }).forEach(([k, v]) => path.setAttribute(k, v));
+                svg.append(path);
+                return svg;
+            }
+            function rideCard(r) {
+                const card = el("button", { class: "ride", type: "button", "data-ride": r.name, "aria-expanded": "false", "aria-controls": "rideDetail",
+                        onclick: () => (openRide === r.name ? closeRide() : showRide(r)) },
+                    el("h3", {}, r.name),
+                    el("div", { class: "meta" }, `${r.miles} mi · about ${r.minutes} min · ${r.kind}`),
+                    r.label ? el("span", { class: "tag badge" }, RIDE_BADGE[r.label]) : el("span", { class: "tag" }, `${Math.round(r.protected_share * 100)}% protected or off-street`),
+                    rideThumb(r.thumb));
+                return card;
+            }
+            function rideDetail(r) {
+                const facts = [
+                    `${r.miles} miles, about ${r.minutes} minutes at an easy 9.5 mph${r.kind === "loop" ? ", once around" : ""}.`,
+                    `${Math.round(r.protected_share * 100)}% on protected lanes or off-street paths.`,
+                    `${r.crashes_beside} crash${r.crashes_beside === 1 ? "" : "es"} that hurt a cyclist since 2021 within ${r.beside_m} m of the ride, on the path or the streets along or beside it (range ${r.range_low} to ${r.range_high}). That's about ${r.crashes_beside_per_mile_year} per mile per year.`,
+                ];
+                if (r.label) facts.push(`On its streets, ${r.segment_crashes} crashes against about ${r.similar_streets_expected} expected on similar streets.`);
+                return [
+                    el("button", { class: "close", type: "button", "aria-label": `Close ${r.name}`, onclick: closeRide }, "×"),
+                    el("h3", {}, r.name),
+                    el("ul", { class: "facts" }, facts.map((t) => el("li", {}, t))),
+                    el("ul", {}, r.limits.map((t) => el("li", {}, t))),
+                    el("div", { class: "small" }, `Path: ${r.source}.`),
+                    el("button", { class: "btn small", type: "button", onclick: () => rideHere(r) }, "Ride here"),
+                ];
+            }
+            function showRide(r) {
+                openRide = r.name;
+                for (const c of document.querySelectorAll(".ride")) {
+                    c.classList.toggle("active", c.dataset.ride === r.name);
+                    c.setAttribute("aria-expanded", c.dataset.ride === r.name);
+                }
+                if ($("exploreOn").checked) setExplore(false);
+                rideLayer.clearLayers();
+                const lines = r.line.map((seg) => L.polyline(seg, { color: "#0b1f3a", weight: 5, opacity: 0.9 }).addTo(rideLayer));
+                map.fitBounds(L.featureGroup(lines).getBounds(), { padding: [40, 40] });
+                $("rideDetail").replaceChildren(...rideDetail(r));
+                $("rideDetail").classList.remove("hidden");
+                $("rideDetail").scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }
+            function closeRide() {
+                if (!openRide) return;
+                const was = openRide;
+                openRide = null;
+                rideLayer.clearLayers();
+                $("rideDetail").classList.add("hidden");
+                $("rideDetail").replaceChildren();
+                for (const c of document.querySelectorAll(".ride")) {
+                    c.classList.remove("active");
+                    c.setAttribute("aria-expanded", "false");
+                    if (c.dataset.ride === was) c.focus({ preventScroll: true });
+                }
+            }
+            document.addEventListener("keydown", (e) => e.key === "Escape" && openRide && closeRide());
+            function rideHere(r) {
+                $("start").value = r.start;
+                $("end").value = r.end;
+                $("formCard").scrollIntoView({ behavior: "smooth", block: "start" });
+                $("go").focus({ preventScroll: true });
+            }
+            fetch("/popular").then((x) => x.json()).then((data) => {
+                rides = data;
+                $("rideList").replaceChildren(...rides.map(rideCard));
+                if (location.hash === "#popular") $("popular").scrollIntoView({ behavior: "smooth", block: "start" });
+            }).catch(() => $("popular").classList.add("hidden"));
+
+            // Header links: smooth scrolls on this page. Explore the city also goes back to the start: the top of the
+            // page, explore mode on, and no ride or route selected.
+            $("navPopular").addEventListener("click", (e) => {
+                e.preventDefault();
+                history.replaceState(null, "", location.pathname + location.search + "#popular");
+                $("popular").scrollIntoView({ behavior: "smooth", block: "start" });
+            });
             $("navExplore").addEventListener("click", (e) => {
                 e.preventDefault();
+                closeRide();
+                if (state.map || state.saved || !$("progress").classList.contains("hidden")) {
+                    if (source) source.close();
+                    reset(false);
+                    $("progress").classList.add("hidden");
+                    $("traceCard").classList.add("hidden");
+                    busy(false);
+                    clearInterval(timer);
+                }
+                history.replaceState(null, "", "/");
                 setExplore(true);
-                if (matchMedia("(max-width: 960px)").matches) window.scrollTo({ top: 0, behavior: "smooth" });
+                $("panel").scrollTo({ top: 0, behavior: "smooth" });
+                window.scrollTo({ top: 0, behavior: "smooth" });
             });
 
             // --- Inputs, examples, and shareable URLs ---
@@ -2014,7 +2167,11 @@
             async function runExample(button) {
                 const trip = { start: button.dataset.start, end: button.dataset.end, when: button.dataset.when };
                 const ex = (await loadSaved())[button.dataset.key];
-                return ex ? showSaved(button.dataset.key, ex) : runTrip(trip);
+                if (ex) return showSaved(button.dataset.key, ex);
+                // Examples never start a live run on their own; Compare routes does that
+                $("start").value = trip.start; $("end").value = trip.end; $("when").value = trip.when || "";
+                $("errorBox").textContent = "This saved example didn't load. Press Compare routes to run the trip.";
+                $("errorBox").classList.remove("hidden");
             }
             $("savedRerun").addEventListener("click", () => state.saved && runTrip(state.saved.trip));
             for (const button of document.querySelectorAll(".examples .chip[data-start]")) {

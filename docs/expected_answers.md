@@ -52,8 +52,8 @@ GROUP BY route ORDER BY risk;
 
 ```sql
 SELECT count(*) AS crashes_since_2021,
-       round(count(*) - 2 * sqrt(count(*)), 1) AS range_low,
-       round(count(*) + 2 * sqrt(count(*)), 1) AS range_high,
+       CASE WHEN count(*) < 10 THEN [0.0, 0.0, 0.2, 0.6, 1.1, 1.6, 2.2, 2.8, 3.5, 4.1][count(*) + 1] ELSE round(count(*) - 2 * sqrt(count(*)), 1) END AS range_low,
+       CASE WHEN count(*) < 10 THEN [3.7, 5.6, 7.2, 8.8, 10.2, 11.7, 13.1, 14.4, 15.8, 17.1][count(*) + 1] ELSE round(count(*) + 2 * sqrt(count(*)), 1) END AS range_high,
        (SELECT round(crash_class_rate * mile_years, 1) FROM 'data/edges.parquet' WHERE edge_id = '42430394-4347534767-0') AS similar_streets_expected,
        (SELECT contributing_factor_vehicle_1 FROM 'data/crash_locations.parquet' l2 JOIN 'data/crashes.parquet' c2 USING (collision_id)
         WHERE l2.edge_id = '42430394-4347534767-0' AND contributing_factor_vehicle_1 NOT IN ('Unspecified', 'Does Not Apply')
@@ -117,8 +117,8 @@ GROUP BY route ORDER BY risk;
 
 ```sql
 SELECT count(*) AS crashes_since_2021,
-       round(count(*) - 2 * sqrt(count(*)), 1) AS range_low,
-       round(count(*) + 2 * sqrt(count(*)), 1) AS range_high,
+       CASE WHEN count(*) < 10 THEN [0.0, 0.0, 0.2, 0.6, 1.1, 1.6, 2.2, 2.8, 3.5, 4.1][count(*) + 1] ELSE round(count(*) - 2 * sqrt(count(*)), 1) END AS range_low,
+       CASE WHEN count(*) < 10 THEN [3.7, 5.6, 7.2, 8.8, 10.2, 11.7, 13.1, 14.4, 15.8, 17.1][count(*) + 1] ELSE round(count(*) + 2 * sqrt(count(*)), 1) END AS range_high,
        (SELECT round(crash_class_rate * mile_years, 1) FROM 'data/edges.parquet' WHERE edge_id = '42439952-42439955-0') AS similar_streets_expected,
        (SELECT contributing_factor_vehicle_1 FROM 'data/crash_locations.parquet' l2 JOIN 'data/crashes.parquet' c2 USING (collision_id)
         WHERE l2.edge_id = '42439952-42439955-0' AND contributing_factor_vehicle_1 NOT IN ('Unspecified', 'Does Not Apply')
@@ -198,8 +198,8 @@ GROUP BY route ORDER BY risk;
 
 ```sql
 SELECT count(*) AS crashes_since_2021,
-       round(count(*) - 2 * sqrt(count(*)), 1) AS range_low,
-       round(count(*) + 2 * sqrt(count(*)), 1) AS range_high,
+       CASE WHEN count(*) < 10 THEN [0.0, 0.0, 0.2, 0.6, 1.1, 1.6, 2.2, 2.8, 3.5, 4.1][count(*) + 1] ELSE round(count(*) - 2 * sqrt(count(*)), 1) END AS range_low,
+       CASE WHEN count(*) < 10 THEN [3.7, 5.6, 7.2, 8.8, 10.2, 11.7, 13.1, 14.4, 15.8, 17.1][count(*) + 1] ELSE round(count(*) + 2 * sqrt(count(*)), 1) END AS range_high,
        (SELECT round(crash_class_rate * mile_years, 1) FROM 'data/edges.parquet' WHERE edge_id = '42469253-42491599-0') AS similar_streets_expected,
        (SELECT contributing_factor_vehicle_1 FROM 'data/crash_locations.parquet' l2 JOIN 'data/crashes.parquet' c2 USING (collision_id)
         WHERE l2.edge_id = '42469253-42491599-0' AND contributing_factor_vehicle_1 NOT IN ('Unspecified', 'Does Not Apply')

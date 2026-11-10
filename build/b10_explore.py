@@ -53,18 +53,18 @@ def main() -> None:
                          "lines": lines(g.geom)})
     layers["projects"] = projects
 
-    # Corridors: a street name within a borough, with more crashes than similar streets beyond n ± 2 × √n
+    # Corridors: a street name within a borough whose crash range (tools.range_bounds) sits above similar streets
     named = edges[edges["name"].notna()].assign(expected=lambda d: d.crash_class_rate * d.mile_years)
     corridors = named.groupby(["name", "borough"]).agg(crashes=("crashes", "sum"), severe=("severe_crashes", "sum"),
                                                        expected=("expected", "sum"), miles=("length_mi", "sum"))
-    corridors = corridors[corridors.crashes - 2 * np.sqrt(corridors.crashes) > corridors.expected]
+    corridors = corridors[tools.range_bounds(corridors.crashes.to_numpy())[0] > corridors.expected.to_numpy()]
     corridors = corridors.assign(excess=corridors.crashes - corridors.expected).sort_values("excess", ascending=False).head(TOP_CORRIDORS)
     layers["corridors"] = []
     for (name, borough), r in corridors.iterrows():
         g = named[(named["name"] == name) & (named.borough == borough)]
         layers["corridors"].append({
             "street": name, "borough": borough, "crashes": int(r.crashes), "severe": int(r.severe),
-            "range_low": round(max(0.0, r.crashes - 2 * np.sqrt(r.crashes)), 1), "range_high": round(r.crashes + 2 * np.sqrt(r.crashes), 1),
+            "range_low": round(tools.range_bounds(r.crashes)[0], 1), "range_high": round(tools.range_bounds(r.crashes)[1], 1),
             "similar_streets_expected": round(float(r.expected), 1), "miles": round(float(r.miles), 1),
             "lines": lines(g.geom)})
 

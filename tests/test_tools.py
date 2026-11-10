@@ -24,9 +24,19 @@ def first_route(trip):
 
 
 def test_count_range():
-    assert tools.count_range(25) == {"n": 25, "low": 15.0, "high": 35.0}
-    assert tools.count_range(1)["low"] == 0.0  # floored
-    assert tools.count_range(0) == {"n": 0, "low": 0.0, "high": 0.0}
+    assert tools.count_range(25) == {"n": 25, "low": 15.0, "high": 35.0}  # n ± 2 × √n from 10 up
+    assert tools.count_range(10) == {"n": 10, "low": 3.7, "high": 16.3}
+
+
+def test_small_counts_get_the_exact_poisson_range():
+    # The exact (Garwood) 95% Poisson range, checked against published values
+    assert tools.count_range(0) == {"n": 0, "low": 0.0, "high": 3.7}
+    assert tools.count_range(1) == {"n": 1, "low": 0.0, "high": 5.6}
+    assert tools.count_range(2) == {"n": 2, "low": 0.2, "high": 7.2}
+    assert tools.count_range(5) == {"n": 5, "low": 1.6, "high": 11.7}
+    assert tools.count_range(9) == {"n": 9, "low": 4.1, "high": 17.1}
+    low, high = tools.range_bounds([0, 3, 12])  # arrays too, as the stretch and corridor tests use them
+    assert round(float(high[0]), 3) == 3.689 and round(float(low[1]), 3) == 0.619 and round(float(low[2]), 2) == round(12 - 2 * 12 ** 0.5, 2)
 
 
 def test_geocode_accepts_lat_lon_and_rejects_far_away():
@@ -146,7 +156,8 @@ def test_dangerous_needs_the_whole_range_above_average():
     low = edges[(edges.crashes == 2)].iloc[0]
     here = tools.crashes[tools.crashes.edge_id == low.edge_id]
     spot = tools._hotspots(edges.loc[[low.edge_id]], here, here)[0]
-    assert spot["crashes"]["low"] == 0.0 and spot["above_average"] is False
+    assert spot["crashes"] == tools.count_range(2) and spot["crashes"]["low"] == 0.2
+    assert spot["above_average"] is (tools.range_bounds(2)[0] > float(low.crash_class_rate * low.mile_years))
 
 
 def test_infrastructure_shows_sip_name_and_year_only():
@@ -317,7 +328,7 @@ def test_every_suggestion_names_its_borough(monkeypatch):
     boroughs = {"Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"}
     assert all(item["detail"] in boroughs for item in found)
     assert {"label": "120 Broadway", "detail": "Manhattan", "value": "120 Broadway, Manhattan"} in found
-    assert found[0] == {"label": "Union Square", "detail": "Manhattan", "value": "Union Square, Manhattan"}
+    assert found[0] == {"label": "Union Square", "detail": "Manhattan", "value": "Union Square, Manhattan", "landmark": True}
 
 
 def test_avoiding_a_stretch_routes_around_it(trip):

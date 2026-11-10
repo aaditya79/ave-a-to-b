@@ -9,6 +9,7 @@ answers, and a Verifier re-runs the tools behind every number before the answer 
 import asyncio
 import gzip
 import json
+import logging
 import os
 import re
 import time
@@ -22,11 +23,15 @@ from agents import Agent, ModelSettings, RunContextWrapper, Runner, function_too
 from agents.extensions.models.litellm_model import LitellmModel
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 import pandas as pd
 import tools
+
+log = logging.getLogger("ave")
+# Shown instead of any exception: the traceback goes to the server log, never to the page
+FRIENDLY_ERROR = "Something went wrong on our side while comparing routes. Please try again."
 from context_panel import AgentContexts, PanelHooks, add_context_panel
 
 load_dotenv(Path(__file__).parent / ".env")
@@ -518,7 +523,21 @@ class TraceHooks(PanelHooks):
         super().__init__(contexts, emit)
         self.tool_calls: list[dict] = []
         self.handoffs: list[dict] = []
+        self.usage: dict[str, dict] = {}  # agent -> input, output, and thinking tokens, as the model reported them
         self.started = time.monotonic()
+
+    async def on_llm_end(self, context, agent, response):
+        await super().on_llm_end(context, agent, response)
+        u = getattr(response, "usage", None)
+        if u is None:
+            return
+        name = re.sub(r" \d+$", "", agent.name)  # "Crash Researcher 3" counts as Crash Researcher
+        row = self.usage.setdefault(name, {"calls": 0, "input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0})
+        row["calls"] += 1
+        row["input_tokens"] += getattr(u, "input_tokens", 0) or 0
+        row["output_tokens"] += getattr(u, "output_tokens", 0) or 0
+        details = getattr(u, "output_tokens_details", None)
+        row["reasoning_tokens"] += getattr(details, "reasoning_tokens", 0) or 0
 
     def handoff(self, sender: str, receiver: str, kind: str, text: str, **extra) -> None:
         """One step of the flow for the timeline: who handed what to whom, and when."""
@@ -926,7 +945,7 @@ add_context_panel(app, sessions)
 # --- Rate limit: the app is public and every question costs Vertex AI calls ---
 
 QUESTIONS_PER_HOUR = 30  # per visitor
-QUESTIONS_PER_DAY = 300  # across all visitors
+QUESTIONS_PER_DAY = 100  # new trips across all visitors; a trip answered from the cache doesn't count
 MAX_INSTANCES = 2  # matches --max-instances on Cloud Run: counts live in each instance's memory
 asked: dict[str, list[float]] = {}  # ip -> times of recent questions
 day_count = {"day": "", "n": 0}  # questions this instance has taken today (New York date)
@@ -942,15 +961,16 @@ def client_ip(request: Request) -> str:
     return forwarded.split(",")[0].strip() or (request.client.host if request.client else "unknown")
 
 
-def over_limit(request: Request) -> str | None:
+def over_limit(request: Request, new: bool = True) -> str | None:
     """The message to show if this question is over a limit, else None (and the question is counted).
-    The daily cap is split across instances, since they don't share memory: 150 each, 300 in all.
-    An instance that restarts starts its counts over."""
+    Every question counts toward the visitor's hourly limit. Only a new one (not answered from the cache)
+    counts toward the daily cap, which is split across instances since they don't share memory: 50 each,
+    100 in all. An instance that restarts starts its counts over."""
     now = time.time()
     today = time.strftime("%Y-%m-%d", time.localtime(now - 5 * 3600))  # New York date, near enough
     if day_count["day"] != today:
         day_count.update(day=today, n=0)
-    if day_count["n"] >= QUESTIONS_PER_DAY // MAX_INSTANCES:
+    if new and day_count["n"] >= QUESTIONS_PER_DAY // MAX_INSTANCES:
         return DAILY_MESSAGE
     ip = client_ip(request)
     recent = [t for t in asked.get(ip, []) if now - t < 3600]
@@ -958,8 +978,59 @@ def over_limit(request: Request) -> str | None:
     if len(recent) >= QUESTIONS_PER_HOUR:
         return VISITOR_MESSAGE
     asked[ip].append(now)
-    day_count["n"] += 1
+    day_count["n"] += new
     return None
+
+
+# --- Answers for the same trip are kept for a day, so a repeat costs no model calls ---
+
+CACHE_SECONDS = 24 * 3600
+CACHE_FILE = Path(os.environ.get("ANSWER_CACHE", "/tmp/ave_answer_cache.json"))  # the container's own disk
+answer_cache: dict[str, dict] = {}
+
+
+def cache_key(message: str, history: list | None, context) -> str | None:
+    """Only a fresh question with no conversation before it: the From, To, and time are all in its words."""
+    if history or not message.strip():
+        return None
+    ctx = context.model_dump() if hasattr(context, "model_dump") else (context or {})
+    if any(ctx.values()) if isinstance(ctx, dict) else ctx:
+        return None  # a typed question answered with the form's fields: the words alone don't say the trip
+    return " ".join(message.lower().split())
+
+
+def load_cache() -> None:
+    try:
+        saved = json.loads(CACHE_FILE.read_text())
+    except (OSError, ValueError):
+        return
+    now = time.time()
+    answer_cache.update({k: v for k, v in saved.items() if now - v["at"] < CACHE_SECONDS})
+
+
+def cached(key: str | None) -> dict | None:
+    hit = answer_cache.get(key) if key else None
+    if hit and time.time() - hit["at"] < CACHE_SECONDS:
+        return hit
+    answer_cache.pop(key, None)
+    return None
+
+
+def store(key: str | None, result: dict, events: list[dict]) -> None:
+    """Keep a full route answer (not a clarifying question or a refusal) and the events that drew it."""
+    if not key or not result.get("map"):
+        return
+    now = time.time()
+    answer_cache[key] = {"at": now, "result": result, "events": events}
+    for old in [k for k, v in answer_cache.items() if now - v["at"] >= CACHE_SECONDS]:
+        answer_cache.pop(old)
+    try:
+        CACHE_FILE.write_text(json.dumps(answer_cache, default=str))
+    except OSError:
+        pass  # the memory copy still works
+
+
+load_cache()
 
 
 class Trip(BaseModel):
@@ -1003,14 +1074,50 @@ def remember(session_id: str, sent: list[dict] | None, message: str, reply: str)
     return history
 
 
+STATIC = {"header.css": "text/css", "header.js": "text/javascript"}
+
+
+def with_header(page: str) -> HTMLResponse:
+    """A page with the shared header (static/header.html) put in at its <!--#header--> marker, so every page
+    has the same header HTML, CSS, and script."""
+    html = (HERE / page).read_text().replace("<!--#header-->", (HERE / "static" / "header.html").read_text(), 1)
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/")
 def index():
-    return FileResponse(HERE / "index.html", headers={"Cache-Control": "no-cache"})
+    return with_header("index.html")
+
+
+@app.get("/how-we-calculate-risk")
+def method_page():
+    """One worked example of the risk math on one street segment, written by build/b11_method.py."""
+    return with_header("method.html")
+
+
+@app.get("/static/{name}")
+def static_file(name: str):
+    if name not in STATIC:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(HERE / "static" / name, media_type=STATIC[name], headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/og.png")
+def og_image():
+    """The link preview image, made by build/b13_og.py."""
+    return FileResponse(HERE / "og.png", media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/favicon.svg")
+def favicon():
+    return FileResponse(HERE / "favicon.svg", media_type="image/svg+xml")
 
 
 @app.post("/chat")
 async def chat(request: ChatRequest, http: Request):
-    if refusal := over_limit(http):
+    key = cache_key(request.message, request.messages, request.context)
+    hit = cached(key)
+    if refusal := over_limit(http, new=hit is None):
         return JSONResponse({"response": refusal, "session_id": request.session_id, "tool_calls": [], "map": None,
                              "verification": None}, status_code=429)
     session_id = request.session_id or str(uuid.uuid4())
@@ -1018,50 +1125,73 @@ async def chat(request: ChatRequest, http: Request):
     hooks = TraceHooks(sessions[session_id], lambda event: None)
     history = remember(session_id, request.messages, request.message, "")
     try:
-        result = await answer(lead_input(request.message, history, request.context), hooks, request.context)
+        if hit:
+            result = {**hit["result"], "cached_at": hit["at"]}
+            hooks.tool_calls, hooks.handoffs = hit["result"].get("tool_calls", []), hit["result"].get("handoffs", [])
+        else:
+            result = await answer(lead_input(request.message, history, request.context), hooks, request.context)
+            store(key, {**result, "tool_calls": hooks.tool_calls, "handoffs": hooks.handoffs, "usage": hooks.usage}, [])
         remember(session_id, history, request.message, result["response"])
         keep_results(session_id, result, request.context)
-    except Exception as e:
-        # Auth, quota, a model that won't stop: say so as the reply, like any other answer
-        result = {"response": f"Something went wrong on our side ({type(e).__name__}: {str(e)[:300]}). Please try again."}
+    except Exception:
+        # Auth, quota, a model that won't stop, a bug: the full traceback goes to the log, a plain message to the page
+        log.exception("/chat failed for %r", request.message[:200])
+        result = {"response": FRIENDLY_ERROR, "error": True}
     return {"response": result["response"], "session_id": session_id, "tool_calls": hooks.tool_calls,
             "answer": result.get("answer"), "clarify": result.get("clarify", False), "options": result.get("options", []),
             "map": result.get("map"), "area": result.get("area"), "distance": result.get("distance"), "declined": result.get("declined", False),
             "unchecked_parts": result.get("unchecked_parts", []), "verification": result.get("verification"),
-            "handoffs": hooks.handoffs}
+            "cached_at": result.get("cached_at"), "usage": result.get("usage", hooks.usage),
+            "handoffs": hooks.handoffs, "error": result.get("error", False)}
 
 
 @app.get("/run")
 async def run(message: str, http: Request, session_id: str | None = None, messages: str = "", context: str = ""):
     """The same pipeline as /chat, streamed as Server-Sent Events for the page."""
-    if refusal := over_limit(http):
+    try:
+        sent = json.loads(messages) if messages else None
+        trip = Trip(**json.loads(context)) if context else None
+    except (ValueError, TypeError):
+        sent, trip = None, None
+    key = cache_key(message, sent, trip)
+    hit = cached(key)
+    if refusal := over_limit(http, new=hit is None):
         async def refused():
             yield f"data: {json.dumps({'type': 'error', 'message': refusal})}\n\n"
         return StreamingResponse(refused(), media_type="text/event-stream")
     session_id = session_id or str(uuid.uuid4())
     sessions[session_id] = AgentContexts()
     queue: asyncio.Queue = asyncio.Queue()
-    hooks = TraceHooks(sessions[session_id], queue.put_nowait)
+    sent_events: list[dict] = []  # what the page saw, so a repeat of this trip replays it without model calls
 
-    try:
-        sent = json.loads(messages) if messages else None
-        trip = Trip(**json.loads(context)) if context else None
-    except (ValueError, TypeError):
-        sent, trip = None, None
+    def emit(event: dict) -> None:
+        sent_events.append(event)
+        queue.put_nowait(event)
+    hooks = TraceHooks(sessions[session_id], emit)
     history = remember(session_id, sent, message, "")
 
     async def work():
         try:
+            if hit:  # the same trip in the last 24 hours: the same answer, marked with when it ran
+                for event in hit["events"]:
+                    queue.put_nowait(event)
+                result = {**hit["result"], "cached_at": hit["at"]}
+                remember(session_id, history, message, result["response"])
+                keep_results(session_id, result, trip)
+                queue.put_nowait({"type": "done", **result})
+                return
             result = await answer(lead_input(message, history, trip), hooks, trip)
+            store(key, {**result, "usage": hooks.usage}, list(sent_events))
             remember(session_id, history, message, result["response"])
             keep_results(session_id, result, trip)
-            queue.put_nowait({"type": "done", **result})
-        except Exception as e:
-            queue.put_nowait({"type": "error", "message": f"{type(e).__name__}: {str(e)[:500]}"})
+            queue.put_nowait({"type": "done", **result, "usage": hooks.usage})
+        except Exception:
+            log.exception("/run failed for %r", message[:200])
+            queue.put_nowait({"type": "error", "message": FRIENDLY_ERROR, "retry": True})
 
     task = asyncio.create_task(work())
 
-    async def events():
+    async def stream():
         try:
             yield f"data: {json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
             while True:
@@ -1072,12 +1202,12 @@ async def run(message: str, http: Request, session_id: str | None = None, messag
         finally:
             task.cancel()  # the page closed the stream: stop spending tokens
 
-    return StreamingResponse(events(), media_type="text/event-stream")
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 # --- Follow-up questions about a finished answer: one small model call over that trip's results, no tools ---
 
-MAX_FOLLOWUPS = 20
+MAX_FOLLOWUPS = 10
 results: dict[str, dict] = {}  # session_id -> the map from the last full answer, and the ride time
 followups: dict[str, list[dict]] = {}  # session_id -> follow-up turns, [{role, content}]
 
@@ -1192,9 +1322,10 @@ async def followup(request: FollowupRequest, http: Request):
     prompt = f"RESULTS:\n{json.dumps(facts, default=str)}\n\nEarlier follow-ups:\n{earlier}\n\nThe rider's follow-up: {request.message}"
     try:
         said = str((await asyncio.wait_for(Runner.run(followup_agent, prompt, max_turns=1), 60)).final_output).strip()
-    except Exception as e:
+    except Exception:
+        log.exception("/followup failed")
         return {**reply, "followups_left": MAX_FOLLOWUPS - asked,
-                "response": f"Something went wrong on our side ({type(e).__name__}). Please try again."}
+                "response": "Something went wrong on our side while answering. Please try again."}
     if said.startswith("RERUN:"):
         reply["rerun"] = said.removeprefix("RERUN:").strip().rstrip(",. ")
         said = f"That's a different trip, so I'll compare it from scratch: {reply['rerun']}."
@@ -1208,6 +1339,20 @@ async def followup(request: FollowupRequest, http: Request):
 
 
 _explore: dict = {}
+
+
+_popular: dict[str, bytes] = {}
+
+
+@app.get("/popular")
+def popular(http: Request):
+    """The popular rides with their numbers, precomputed by build/b12_popular.py."""
+    if not _popular:
+        raw = (HERE / "data" / "popular_rides.json").read_bytes()
+        _popular.update(raw=raw, gz=gzip.compress(raw, 6))
+    if "gzip" in http.headers.get("accept-encoding", ""):
+        return Response(_popular["gz"], media_type="application/json", headers={"Content-Encoding": "gzip"})
+    return Response(_popular["raw"], media_type="application/json")
 
 
 _saved: dict[str, bytes] = {}
