@@ -1,5 +1,6 @@
 """The page in a real browser: typing in From shows suggestions. Needs Playwright and Chrome (uv sync --group build)."""
 
+import json
 import socket
 import threading
 import time
@@ -245,7 +246,7 @@ def test_history_keeps_a_finished_trip_and_reopens_it_without_a_model_call(page,
 
 def test_calories_use_met_by_speed_and_the_weight_field(page, base_url):
     page.goto(base_url)
-    page.evaluate("localStorage.removeItem('aveWeightKg')")
+    page.evaluate("localStorage.removeItem('aveWeightKg'); localStorage.setItem('aveWeightUnit', 'kg')")
     assert page.evaluate("kcal(6, 60)") == 4 * 70 * 1  # 6 mph: MET 4, 70 kg, 1 hour
     assert page.evaluate("kcal(11, 60)") == round(6.8 * 70)  # 11 mph: MET 6.8
     assert page.evaluate("kcal(6.2, 39.2, 80)") == round(4 * 80 * 39.2 / 60)
@@ -402,3 +403,242 @@ def test_info_buttons_have_a_24_px_tap_area(page, base_url):
         const x = b.left + b.width / 2, y = b.top + b.height / 2, hit = (dx, dy) => document.elementFromPoint(x + dx, y + dy)?.closest('.info');
         return [b.width, hit(11, 0) && hit(-11, 0) && hit(0, 11) && hit(0, -11) ? 1 : 0]; })()""")
     assert size == [18, 1]  # looks 18 px wide, takes taps 11 px from its center
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_bullets_sit_10_px_from_from_and_to(page, base_url, width):
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(base_url)
+    gaps = page.evaluate("""[...document.querySelectorAll('.field-head label')].map(l => {
+        const b = l.querySelector('.bullet').getBoundingClientRect(), r = document.createRange();
+        r.setStart(l.lastChild, 0); r.setEnd(l.lastChild, l.lastChild.length);
+        return Math.round(r.getBoundingClientRect().left - b.right); })""")
+    assert gaps == [10, 10]
+    page.set_viewport_size({"width": 1280, "height": 800})
+
+
+def lga_map():
+    """The map a Manhattan -> LaGuardia trip shows, built in code (no model): five hotspots close together on
+    Northern Boulevard, which is where markers once got spread far off the routes."""
+    run = app.Research(hooks=app.TraceHooks(app.AgentContexts(), lambda e: None))
+    app.find_routes(run, "Union Square, Manhattan", "LaGuardia Airport, Queens")
+    facts = app.page_facts(run, run.hooks)
+    return {**app.map_routes(run.routes), "hotspots": facts["hotspots"], "before_after": facts["before_after"]}
+
+
+SPOT_CHECK = """(() => {
+  const px = (p) => map.latLngToContainerPoint(p);
+  const segDist = (p, a, b) => { const dx = b.x - a.x, dy = b.y - a.y, L = dx*dx + dy*dy; const t = L ? Math.max(0, Math.min(1, ((p.x-a.x)*dx + (p.y-a.y)*dy) / L)) : 0; return Math.hypot(p.x - a.x - t*dx, p.y - a.y - t*dy); };
+  const lines = []; routeLayer.eachLayer((g) => g.eachLayer((l) => l.options.interactive !== false && lines.push(l.getLatLngs().map(px))));
+  const near = (p) => Math.min(...lines.map((ln) => Math.min(...ln.slice(1).map((b, i) => segDist(p, ln[i], b)))));
+  const leaders = leaderLayer.getLayers().filter((l) => l.getLatLngs).map((l) => l.getLatLngs());
+  return state.map.hotspots.map((s) => ({ n: s.number, shown: !!s.marker, meters: metersToRoutes(s.lat, s.lon),
+      truePx: near(px([s.lat, s.lon])), nudge: s.marker ? px([s.lat, s.lon]).distanceTo(px(s.marker.getLatLng())) : null,
+      leader: leaders.some((ll) => ll[0].lat === s.lat && ll[0].lng === s.lon) }));
+})()"""
+
+
+@pytest.mark.parametrize("zoom", [None, 14, 16])
+def test_every_hotspot_marker_sits_on_a_drawn_route(page, base_url, zoom):
+    data = lga_map()
+    data["hotspots"].append({**data["hotspots"][0], "number": 9, "lat": 40.7000, "lon": -73.8000})  # a stretch on no drawn route
+    done = next(e for e in json.loads((app.HERE / "data" / "saved_examples.json").read_text())["columbia-union-sq"]["events"] if e["type"] == "done")
+    body = "".join(f"data: {json.dumps(e)}\n\n" for e in [{"type": "start", "session_id": "t"}, {"type": "routes", "data": data}, {**done, "map": data}])
+    page.goto(base_url)
+    page.route("**/run?*", lambda r: r.fulfill(status=200, headers={"Content-Type": "text/event-stream"}, body=body))
+    page.fill("#start", "Union Square, Manhattan")
+    page.fill("#end", "LaGuardia Airport, Queens")
+    page.click("#go")
+    page.wait_for_selector(".spot-pin", timeout=15000)
+    page.wait_for_timeout(1200)
+    page.unroute("**/run?*")
+    if zoom:
+        page.evaluate(f"map.setView([40.7528, -73.922], {zoom}, {{ animate: false }})")
+        page.wait_for_timeout(400)
+    spots = page.evaluate(SPOT_CHECK)
+    shown = [s for s in spots if s["shown"]]
+    assert [s["n"] for s in spots if not s["shown"]] == [9]  # off every route: not drawn
+    assert len(shown) == 5 and page.locator(".spot-pin").count() == 5
+    for s in shown:
+        assert s["meters"] < 5, s  # its true point is on a route's line
+        assert s["truePx"] <= 6, s  # and on a line as drawn (shared streets shift up to 5 px)
+        assert s["nudge"] <= 12.6, s  # the marker moved at most about 12 px
+        assert s["leader"] or s["nudge"] <= 1, s  # with a leader line back to its true point when it moved
+    # The recommended route is drawn last, on top of the others and of the selected route's risk coloring
+    page.evaluate("selectRoute(distinctRoutes(state.map).find((r) => !isRecommended(r)).route_ref)")
+    on_top = page.evaluate("routeLayer.getLayers().at(-1) === state.layers[distinctRoutes(state.map).find(isRecommended).route_ref]")
+    assert on_top
+
+
+def test_routes_on_the_same_street_are_drawn_side_by_side(page, base_url):
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector("#summary .support")
+    shifts = page.evaluate("""(() => { const routes = distinctRoutes(state.map), rec = routes.find(isRecommended);
+        const offs = sharedOffsets(routes, rec); return routes.map((r) => [r === rec, [...new Set(offs.get(r))].sort()]); })()""")
+    assert any(len(set(o)) > 1 for _, o in shifts)  # some streets are shared
+    for is_rec, o in shifts:
+        assert (o == [0]) if is_rec else all(abs(x) <= 5 for x in o)  # the recommended route stays on the true street
+
+
+def test_a_session_syncs_restores_and_deletes(page, base_url, monkeypatch):
+    from tests.test_sessions import DownStore, MemoryStore
+    store = MemoryStore()
+    monkeypatch.setattr(app, "session_store", store)
+    app.session_asked.clear()
+    page.goto(base_url)
+    page.evaluate("localStorage.clear()")
+    body = saved_stream()
+    page.route("**/run?*", lambda r: r.fulfill(status=200, headers={"Content-Type": "text/event-stream"}, body=body))
+    page.fill("#start", "Prospect Heights, Brooklyn")
+    page.fill("#end", "DUMBO, Brooklyn")
+    page.click("#go")
+    page.wait_for_function("localStorage.getItem('aveHistory')", timeout=15000)
+    page.unroute("**/run?*")
+    sid = page.evaluate("sessionId()")
+    for _ in range(50):  # the page saves to the session a moment after the trip finishes
+        if sid in store.files:
+            break
+        page.wait_for_timeout(100)
+    assert len(sid) == 22 and len(json.loads(store.files[sid])["trips"]) == 1
+    # Another browser: nothing local, restore by pasting the ID
+    page.evaluate("localStorage.clear()")
+    page.goto(base_url + "/#history")
+    page.wait_for_selector("#historyCard:not(.hidden)")
+    assert page.inner_text("#sessionId") != sid and "Keep it private" in page.inner_text("#sessionBox")
+    page.fill("#sessionRestore", "not-a-real-session-id!")
+    page.click("#sessionRestoreGo")
+    assert page.inner_text("#sessionStatus") == "No session found"
+    page.fill("#sessionRestore", sid)
+    page.click("#sessionRestoreGo")
+    page.wait_for_selector(".hist-item")
+    assert page.inner_text("#sessionId") == sid and "Restored 1 trip" in page.inner_text("#sessionStatus")
+    calls = count_model_requests(page)
+    page.locator(".hist-item").click()
+    page.wait_for_selector("#summary .support")
+    assert page.text_content("#savedTag") == "From your History" and calls == []
+    # Delete: two taps, the server copy and local History both go
+    page.click("#navHistory")
+    page.click("#sessionDelete")
+    page.click("#sessionDelete")
+    page.wait_for_function("document.getElementById('sessionStatus').textContent.startsWith('Session deleted')")
+    assert sid not in store.files and page.evaluate("localStorage.getItem('aveHistory')") is None
+    assert page.inner_text("#sessionId") != sid
+    # The bucket down: History still works here, and the page says sessions can't sync
+    monkeypatch.setattr(app, "session_store", DownStore())
+    page.evaluate("pushSession()")
+    page.wait_for_function("document.getElementById('sessionStatus').textContent.includes(\"can't sync right now\")")
+    page.evaluate("localStorage.clear()")
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_the_year_sparkline_is_padded_labeled_and_matches_the_hour_chart(page, base_url, width):
+    page.set_viewport_size({"width": width, "height": 900})
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector(".timing-grid svg.years")
+    out = page.evaluate("""(() => { const y = document.querySelector('svg.years'), h = document.querySelector('svg.hours');
+        const box = y.getBoundingClientRect(), yr = [...y.querySelectorAll('g.yr')];
+        const texts = yr.map((g) => [...g.querySelectorAll('text')].map((t) => t.textContent));
+        const circles = yr.map((g) => g.querySelector('circle').getBoundingClientRect());
+        const labels = [...y.querySelectorAll('text')].map((t) => t.getBoundingClientRect());
+        const inside = labels.every((r) => r.left >= box.left - 0.5 && r.right <= box.right + 0.5 && r.top >= box.top - 0.5 && r.bottom <= box.bottom + 0.5);
+        const overlap = labels.some((a, i) => labels.some((b, j) => j > i && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom));
+        const mid = (c) => (c.left + c.right) / 2, gaps = circles.slice(1).map((c, i) => Math.round(mid(c) - mid(circles[i])));
+        const base = y.querySelector('line').getBoundingClientRect().top, hbase = h.querySelector('line').getBoundingClientRect().top - h.getBoundingClientRect().top;
+        return { texts, inside, overlap, gaps, hollow: yr.at(-1).querySelector('circle').getAttribute('fill'), dashed: !!y.querySelector('polyline[stroke-dasharray]'),
+                 heights: [Math.round(box.height), Math.round(h.getBoundingClientRect().height)], baselines: [Math.round(base - box.top), Math.round(hbase)],
+                 tips: yr.map((g) => g.querySelector('title').textContent), belowDots: circles.every((c) => c.bottom < base) }; })()""")
+    years = [t[1] for t in out["texts"]]
+    assert years == ["21", "22", "23", "24", "25", "26*"]
+    assert all(t[0].lstrip("~").isdigit() for t in out["texts"])  # a count above every point
+    assert out["inside"] and not out["overlap"] and len(set(out["gaps"])) == 1  # padded, nothing touching, even spacing
+    assert out["hollow"] == "#fff" and out["dashed"] and out["belowDots"]
+    assert out["heights"][0] == out["heights"][1] and out["baselines"][0] == out["baselines"][1]  # a set with the hour chart
+    assert "2026: " in out["tips"][-1] and "so far" in out["tips"][-1]  # every point has its number on hover
+    page.set_viewport_size({"width": 1280, "height": 800})
+
+
+
+def test_weight_switches_between_kg_and_lb_without_changing_calories(page, base_url):
+    page.goto(base_url)
+    page.evaluate("localStorage.removeItem('aveWeightKg'); localStorage.removeItem('aveWeightUnit')")
+    assert page.evaluate("weightUnit()") == "lb"  # an en-US browser starts in pounds
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector("#routeCards .weight-input")
+    card = page.locator("#routeCards .card.route").first
+    box, kcal = card.locator(".weight-input"), card.locator(".kcal")
+    assert box.input_value() == "154" and card.locator(".unit-toggle [aria-pressed=true]").inner_text() == "lb"  # 70 kg
+    before = kcal.inner_text()
+    card.locator(".unit-toggle button", has_text="kg").click()
+    assert box.input_value() == "70" and kcal.inner_text() == before  # the same weight, so the same calories
+    assert page.evaluate("localStorage.getItem('aveWeightUnit')") == "kg"
+    card.locator(".unit-toggle button", has_text="lb").click()
+    box.fill("180")
+    box.dispatch_event("change")
+    assert abs(page.evaluate("weightKg()") - 180 / 2.2046) < 0.01  # kept in kg
+    after_lb = kcal.inner_text()
+    card.locator(".unit-toggle button", has_text="kg").click()
+    assert box.input_value() == "82" and kcal.inner_text() == after_lb  # 180 lb = 81.6 kg, rounded
+    assert page.evaluate("[shownWeight(100, 'lb'), shownWeight(100, 'kg'), Math.round(toKg(220.46, 'lb'))]") == [220, 100, 100]
+    # A browser outside the US starts in kg, and storage that throws falls back cleanly
+    assert page.evaluate("""(() => { const real = Object.getOwnPropertyDescriptor(Navigator.prototype, 'language');
+        Object.defineProperty(navigator, 'language', { value: 'en-GB', configurable: true }); localStorage.removeItem('aveWeightUnit');
+        const u = weightUnit(); delete navigator.language; return u; })()""") == "kg"
+    page.evaluate("localStorage.removeItem('aveWeightKg'); localStorage.removeItem('aveWeightUnit')")
+
+
+def ride(i, start, end, miles, minutes, streets, lanes, ridden=True):
+    route = {"miles": miles, "minutes": minutes, "miles_by_lane": lanes, "streets": streets}
+    return {"id": i, "at": 1_700_000_000_000 + i, "ridden": ridden, "trip": {"start": start, "end": end, "when": ""},
+            "rec": {"name": "Balanced", "line": [[40.7, -73.99], [40.71, -73.98]], "miles": miles, "minutes": minutes},
+            "result": {"map": {"recommended_route": "balanced", "routes": {"balanced": route}, "start": {"label": start}, "end": {"label": end}}}}
+
+
+RIDES = [
+    ride(1, "DUMBO, Brooklyn", "Union Square, Manhattan", 3.0, 20, [{"name": "Manhattan Bridge", "borough": "Brooklyn", "miles": 1.3}], {"protected": 2.0, "path": 0.5, "painted": 0.5}),
+    ride(2, "Astoria, Queens", "Yankee Stadium, Bronx", 6.0, 40, [{"name": "Shore Boulevard", "borough": "Queens", "miles": 1}], {"protected": 1.0, "path": 4.0}),
+    ride(3, "DUMBO, Brooklyn", "Union Square, Manhattan", 3.0, 20, [], {"path": 2.0, "none": 1.0}),
+    ride(4, "St. George, Staten Island", "St. George, Staten Island", 2.1, 14, [], {"path": 2.1}),
+    ride(5, "Harlem, Manhattan", "Inwood, Manhattan", 20.0, 120, [], {"none": 20.0}, ridden=False),  # not ridden: not counted
+]
+
+
+def test_ride_stats_count_only_trips_marked_ridden(page, base_url):
+    page.goto(base_url)
+    st = page.evaluate(f"rideStats({json.dumps(RIDES)}, 70)")
+    assert st["rides"] == 4 and st["miles"] == 14.1 and st["minutes"] == 94
+    assert st["safeMiles"] == 2.5 + 5.0 + 2.0 + 2.1
+    assert st["kcal"] == sum(page.evaluate(f"kcal({m}, {t}, 70)") for m, t in [(3, 20), (6, 40), (3, 20), (2.1, 14)])
+    assert st["longest"] == {"trip": "Astoria, Queens → Yankee Stadium, Bronx", "miles": 6}
+    assert st["mostRidden"] == {"trip": "DUMBO, Brooklyn → Union Square, Manhattan", "times": 2}
+    assert st["boroughs"] == ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
+    assert st["badges"] == {"allBoroughs": True, "bridgeCrosser": True, "greenwayRegular": True}  # rides 2, 3, 4 are half or more path
+    assert page.evaluate(f"rideStats({json.dumps(RIDES[2:4])}, 70).badges") == {"allBoroughs": False, "bridgeCrosser": False, "greenwayRegular": False}
+
+
+def test_ride_comparisons_use_the_fixed_distances(page, base_url):
+    page.goto(base_url)
+    fun = page.evaluate("comparisons(26.2)")
+    assert fun == ["About 4.3 laps of the Central Park loop.", "About 2.0 times the length of Manhattan.",
+                   "Like crossing the Brooklyn Bridge 24 times.", "About 1.0 NYC Marathons.",
+                   "About 10 kg of CO2 not emitted, compared with driving the same miles."]
+    assert page.evaluate("comparisons(13.1)")[3] == "About 50% of an NYC Marathon." and page.evaluate("comparisons(0)") == []
+    assert not any(w in " ".join(fun).lower() for w in ["pizza", "bagel", "slice", "donut", "burger"])
+
+
+def test_your_rides_card_in_history(page, base_url, monkeypatch):
+    from tests.test_sessions import MemoryStore
+    monkeypatch.setattr(app, "session_store", MemoryStore())
+    page.goto(base_url)
+    page.evaluate(f"localStorage.setItem('aveHistory', JSON.stringify({json.dumps([{**r, 'ridden': False} for r in RIDES])}))")
+    page.reload()
+    page.click("#navHistory")
+    page.wait_for_selector("#historyCard:not(.hidden)")
+    assert "Mark a trip as ridden to start your stats." in page.inner_text("#rideStats")
+    page.locator(".hist-row").nth(1).locator(".rode input").check()
+    page.wait_for_selector("#rideStats .stats-grid")
+    text = page.inner_text("#rideStats")
+    assert "Based on rides you marked as ridden." in text and "Longest ride" in text and "Boroughs: Queens, Bronx" in text
+    assert page.locator("#rideStats .fun").inner_text().count("About") + page.locator("#rideStats .fun").inner_text().count("Like") == 2
+    assert page.locator(".badge.off").count() == 3
+    assert page.evaluate("readHistory().find((x) => x.id === 2).ridden") is True  # kept in History, and so in the session
+    page.evaluate("localStorage.clear()")

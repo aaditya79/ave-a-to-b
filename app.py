@@ -1071,6 +1071,71 @@ def over_limit(request: Request, new: bool = True) -> str | None:
     return None
 
 
+# --- Sessions: a browser's History, kept on the server so it can be restored with its ID ---
+# One JSON file per session in a Cloud Storage bucket (SESSION_BUCKET) that deletes files after 30 days. A file holds
+# the trips (From, To, ride time, the saved result, timestamps) and when it was last saved; no IP, no name, nothing else.
+
+SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{22}$")  # 128 random bits, base64url without padding
+SESSION_MAX_TRIPS = 25
+SESSION_MAX_BYTES = 1_000_000
+SESSION_REQUESTS_PER_HOUR = 120  # per visitor, counted apart from questions so syncing never uses up a trip
+SESSION_TRIP_KEYS = {"id", "at", "trip", "asked", "rec", "result", "ridden"}
+NO_SESSION = "No session found"
+SESSIONS_OFFLINE = "Sessions can't sync right now. History is still saved in this browser."
+session_asked: dict[str, list[float]] = {}
+
+
+class SessionStore:
+    """The bucket. A missing bucket setting or any storage error means sessions are offline, never a crash."""
+
+    def __init__(self, bucket: str | None):
+        self.bucket_name, self._bucket = bucket, None
+
+    def bucket(self):
+        if not self.bucket_name:
+            raise RuntimeError("SESSION_BUCKET is not set")
+        if self._bucket is None:
+            from google.cloud import storage  # loaded on first use, so it doesn't slow the start
+            self._bucket = storage.Client().bucket(self.bucket_name)
+        return self._bucket
+
+    def get(self, sid: str) -> dict | None:
+        from google.api_core.exceptions import NotFound
+        try:
+            return json.loads(self.bucket().blob(f"sessions/{sid}.json").download_as_bytes(timeout=10))
+        except NotFound:
+            return None
+
+    def put(self, sid: str, data: bytes) -> None:
+        self.bucket().blob(f"sessions/{sid}.json").upload_from_string(data, content_type="application/json", timeout=10)
+
+    def delete(self, sid: str) -> None:
+        from google.api_core.exceptions import NotFound
+        try:
+            self.bucket().blob(f"sessions/{sid}.json").delete(timeout=10)
+        except NotFound:
+            pass
+
+
+session_store = SessionStore(os.getenv("SESSION_BUCKET"))
+
+
+def session_refusal(request: Request) -> JSONResponse | None:
+    now = time.time()
+    ip = client_ip(request)
+    recent = [t for t in session_asked.get(ip, []) if now - t < 3600]
+    if len(recent) >= SESSION_REQUESTS_PER_HOUR:
+        session_asked[ip] = recent
+        return JSONResponse({"error": "Too many session requests from this connection. Please try again in an hour."}, status_code=429)
+    session_asked[ip] = recent + [now]
+    return None
+
+
+def offline() -> JSONResponse:
+    log.exception("session storage unavailable")
+    return JSONResponse({"error": SESSIONS_OFFLINE, "offline": True}, status_code=503)
+
+
 # --- Answers for the same trip are kept for a day, so a repeat costs no model calls ---
 
 CACHE_SECONDS = 24 * 3600
@@ -1485,6 +1550,64 @@ def explore(http: Request):
 def autocomplete(q: str = ""):
     """At most 5 suggestions for the From and To boxes: built-in places, then NYC GeoSearch."""
     return tools.suggest(q[:100])
+
+
+@app.get("/session/{sid}")
+def get_session(sid: str, http: Request):
+    """A session's trips. A malformed ID and an unknown one get the same answer."""
+    if refusal := session_refusal(http):
+        return refusal
+    if not SESSION_ID.match(sid):
+        return JSONResponse({"error": NO_SESSION}, status_code=404)
+    try:
+        found = session_store.get(sid)
+    except Exception:
+        return offline()
+    if not found:
+        return JSONResponse({"error": NO_SESSION}, status_code=404)
+    return {"trips": found.get("trips", []), "updated": found.get("updated")}
+
+
+@app.put("/session/{sid}")
+async def put_session(sid: str, http: Request):
+    """Saves a session's trips, replacing what was there: at most SESSION_MAX_TRIPS trips and SESSION_MAX_BYTES."""
+    if refusal := session_refusal(http):
+        return refusal
+    if not SESSION_ID.match(sid):
+        return JSONResponse({"error": NO_SESSION}, status_code=404)
+    body = await http.body()
+    if len(body) > SESSION_MAX_BYTES:
+        return JSONResponse({"error": f"A session holds at most about {SESSION_MAX_BYTES // 1_000_000} MB."}, status_code=413)
+    try:
+        trips = json.loads(body).get("trips")
+        assert isinstance(trips, list) and all(isinstance(t, dict) for t in trips)
+    except (ValueError, AttributeError, AssertionError):
+        return JSONResponse({"error": "Send {\"trips\": [...]}."}, status_code=422)
+    if len(trips) > SESSION_MAX_TRIPS:
+        return JSONResponse({"error": f"A session holds at most {SESSION_MAX_TRIPS} trips."}, status_code=413)
+    kept = [{k: v for k, v in t.items() if k in SESSION_TRIP_KEYS} for t in trips]  # only the trip fields, nothing else
+    data = json.dumps({"updated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "trips": kept}, separators=(",", ":")).encode()
+    if len(data) > SESSION_MAX_BYTES:
+        return JSONResponse({"error": f"A session holds at most about {SESSION_MAX_BYTES // 1_000_000} MB."}, status_code=413)
+    try:
+        session_store.put(sid, data)
+    except Exception:
+        return offline()
+    return {"ok": True, "trips": len(kept)}
+
+
+@app.delete("/session/{sid}")
+def delete_session(sid: str, http: Request):
+    """Removes the server copy. The same answer whether or not the session existed."""
+    if refusal := session_refusal(http):
+        return refusal
+    if not SESSION_ID.match(sid):
+        return {"ok": True}
+    try:
+        session_store.delete(sid)
+    except Exception:
+        return offline()
+    return {"ok": True}
 
 
 @app.get("/reverse")

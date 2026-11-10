@@ -340,6 +340,7 @@ def _tidy(label: str) -> str:
         label = label.removesuffix(tail)
     parts = [re.sub(r"'S\b", "'s", p.title()) if p.isupper() else p for p in label.split(", ")]
     parts[0] = re.sub(r"\bB'Way\b", "Broadway", parts[0])  # the city's short spelling, so it dedupes
+    parts[0] = re.sub(r"(^|\s)([A-Z]) Avenue\b", r"\1Avenue \2", parts[0])  # GeoSearch's "A Avenue" is Avenue A on every sign
     return re.sub(r"\b(\d+)(St|Nd|Rd|Th)\b", lambda m: m[1] + m[2].lower(), ", ".join(parts))
 
 
@@ -364,12 +365,13 @@ def _inside(rings: list, lat: float, lon: float) -> bool:
 
 
 def _ordinal_streets(text: str) -> str:
-    """'336 5 Avenue' -> '336 5th Avenue', 'East 34 Street' -> 'East 34th Street'. A house number stays as it is."""
+    """'336 5 Avenue' -> '336 5th Avenue', 'East 34 Street' -> 'East 34th Street'. A house number stays as it is,
+    including before a lettered avenue ('199 Avenue A')."""
     def nth(m):
         n = int(m[2])
         suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
         return f"{m[1]}{n}{suffix} {m[3]}"
-    return re.sub(r"(^|\s)(\d+) (Avenue|Street|Road|Place|Drive|Terrace|Lane)\b", lambda m: nth(m) if m.start(2) > 0 or not re.match(r"\d+ \d", text) else m[0], text)
+    return re.sub(r"(^|\s)(\d+) (Avenue|Street|Road|Place|Drive|Terrace|Lane)\b(?! [A-Z]\b)", lambda m: nth(m) if m.start(2) > 0 or not re.match(r"\d+ \d", text) else m[0], text)
 
 
 def coords_label(lat: float, lon: float) -> str:

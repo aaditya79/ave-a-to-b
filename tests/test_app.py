@@ -619,6 +619,36 @@ def test_reverse_gives_a_readable_address_and_routes_from_the_pin(monkeypatch):
     assert (place["lat"], place["lon"]) == (40.7484, -73.9857)
 
 
+def geosearch_reply(features):
+    class Reply:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"features": features}
+    return lambda *args, **kwargs: Reply()
+
+
+@pytest.mark.parametrize("raw, shown", [("199 A AVENUE", "199 Avenue A"), ("117 B AVENUE", "117 Avenue B"),
+                                        ("40 C AVENUE", "40 Avenue C"), ("12 D AVENUE", "12 Avenue D")])
+def test_lettered_avenues_read_as_on_the_street_sign_in_reverse(monkeypatch, raw, shown):
+    monkeypatch.setattr(app.tools.httpx, "get", geosearch_reply(
+        [{"properties": {"name": raw, "label": f"{raw}, New York, NY, USA", "borough": "Manhattan", "distance": 0.01}}]))
+    found = client.get("/reverse", params={"lat": 40.7265, "lon": -73.9837}).json()
+    assert found["value"] == f"{shown}, Manhattan"
+
+
+def test_lettered_avenues_read_as_on_the_street_sign_in_autocomplete(monkeypatch):
+    monkeypatch.setattr(app.tools.httpx, "get", geosearch_reply(
+        [{"properties": {"label": "199 A AVENUE, New York, NY, USA", "borough": "Manhattan", "layer": "address"}},
+         {"properties": {"label": "50 AVENUE P, Brooklyn, NY, USA", "borough": "Brooklyn", "layer": "address"}}]))
+    app.tools._suggested.pop("199 a avenue", None)
+    values = [s["value"] for s in client.get("/autocomplete", params={"q": "199 a avenue"}).json()]
+    assert values[:2] == ["199 Avenue A, Manhattan", "50 Avenue P, Brooklyn"]  # house numbers stay plain, not "199th"
+    assert app.tools._ordinal_streets(app.tools._tidy("336 5 AVENUE")) == "336 5th Avenue"  # numbered avenues unchanged
+    app.tools._suggested.pop("199 a avenue", None)
+
+
 def test_reverse_falls_back_to_coordinates_that_still_route(monkeypatch):
     def down(*args, **kwargs):
         raise app.tools.httpx.ConnectTimeout("down")

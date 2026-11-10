@@ -135,6 +135,7 @@
 
             /* --- Ride totals, the loop card, History, and the cap message --- */
             .field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+            .field-head label { display: flex; align-items: center; gap: 10px; }
             .pick-btn { font: inherit; font-size: 13px; font-weight: 600; color: var(--blue); background: #fff; border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
             .pick-btn:hover, .pick-btn[aria-pressed="true"] { border-color: var(--blue); background: var(--blue-soft); }
             .app.picking #map, .app.picking #map .leaflet-interactive { cursor: crosshair; }
@@ -144,10 +145,21 @@
             .ride-totals { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 10px; font-size: 14px; color: var(--muted); }
             .ride-totals b { color: var(--navy); }
             .weight { display: inline-flex; align-items: center; gap: 6px; }
+            .unit-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; vertical-align: middle; }
+            .unit-toggle button { border: 0; background: #fff; color: var(--muted); font: inherit; font-size: 13px; padding: 3px 8px; cursor: pointer; min-height: 26px; }
+            .unit-toggle button + button { border-left: 1px solid var(--line); }
+            .unit-toggle button[aria-pressed="true"] { background: var(--navy); color: #fff; font-weight: 600; }
             .weight-input { width: 64px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; font: inherit; color: var(--navy); }
             .loop-card h2, .hist-head h2 { margin: 0; font-size: 18px; }
             .loop-card .close, .hist-head .close { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px; border-radius: 8px; border: 0; background: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted); }
             .loop-card, #historyCard { position: relative; }
+            .session-box { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); display: grid; gap: 8px; }
+            .session-box h3 { margin: 0; font-size: 15px; }
+            .session-box p { margin: 0; }
+            .session-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+            .session-row code { font-size: 14px; padding: 6px 8px; border-radius: 6px; background: var(--blue-soft); color: var(--navy); word-break: break-all; }
+            .session-row .input { flex: 1 1 200px; min-width: 0; font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
+            .session-status.bad { color: #a4262c; }
             .loop-card .close:hover, .hist-head .close:hover { background: var(--blue-soft); color: var(--navy); }
             .hist-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; padding-right: 36px; }
             .hist-total { font-size: 14px; margin: 4px 0 10px; }
@@ -157,6 +169,24 @@
             .hist-item svg { width: 64px; height: 40px; }
             .hist-item b { display: block; font-size: 15px; }
             .hist-item span { font-size: 13px; color: var(--muted); }
+            .hist-row { display: grid; gap: 4px; }
+            .rode { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); cursor: pointer; padding: 2px 4px; justify-self: start; min-height: 24px; }
+            .rode input { width: 18px; height: 18px; accent-color: var(--blue); margin: 0; }
+            .ride-stats { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin: 6px 0 12px; background: var(--bg); display: grid; gap: 10px; }
+            .ride-stats h3 { margin: 0; font-size: 15px; }
+            .ride-stats .small { margin: 0; }
+            .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 8px; }
+            .stats-grid div { background: #fff; border-radius: 8px; padding: 6px 8px; }
+            .stats-grid b { display: block; font-size: 18px; color: var(--navy); font-variant-numeric: tabular-nums; }
+            .stats-grid span { font-size: 12px; color: var(--muted); }
+            .highlights { margin: 0; padding-left: 18px; font-size: 14px; }
+            .fun { font-size: 14px; margin: 0; min-height: 2.9em; }
+            .badges { display: flex; flex-wrap: wrap; gap: 10px 16px; }
+            .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--navy); }
+            .badge i { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: #fff; font: 700 12px Helvetica, Arial, sans-serif; font-style: normal; }
+            .badge.off { color: var(--muted); }
+            .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+            .badge.off i { background: #b8c0cc !important; }
             .loop-pin { background: #111; color: #fff; font: 700 12px "Helvetica Neue", Helvetica, Arial, sans-serif; padding: 4px 8px; border-radius: 6px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.3); border: 2px solid #fff; }
             .loop-arrow { color: #0b1f3a; font-size: 16px; line-height: 1; text-shadow: 0 0 3px #fff, 0 0 3px #fff; }
             .limit-help { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
@@ -387,8 +417,8 @@
             .timing { margin-top: 12px; }
             .timing > summary { font-size: 14px; font-weight: 600; cursor: pointer; }
             .timing-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; margin-top: 6px; }
-            .timing-grid svg { width: 100%; height: auto; display: block; overflow: visible; }
-            .timing-grid svg.years { max-width: 200px; }
+            /* The two charts are a set: the same height, baseline, tick text, and gray */
+            .timing-grid svg { height: 96px; width: auto; max-width: 100%; display: block; overflow: visible; }
             .timing-grid p { margin: 6px 0 0; }
             @media (max-width: 520px) { .timing-grid { grid-template-columns: 1fr; } }
             .tl-problems { margin: 4px 0 0; padding-left: 20px; font-size: 14px; }
@@ -551,10 +581,20 @@
                         <h2 id="historyTitle">History</h2>
                         <button class="close" type="button" id="historyClose" aria-label="Close History">×</button>
                     </div>
-                    <p class="small" style="margin-top: 0">Trips you compared, kept in this browser only. Nothing is stored on our server. Opening one shows the saved result with no new model call.</p>
+                    <p class="small" style="margin-top: 0">Trips you compared, kept in this browser and saved under your session ID for 30 days, so you can restore them on another device. Opening one shows the saved result with no new model call.</p>
+                    <section class="ride-stats" id="rideStats" aria-labelledby="rideStatsTitle"></section>
                     <div class="hist-total" id="historyTotal"></div>
                     <div class="hist-list" id="historyList"></div>
                     <button class="btn small" type="button" id="historyClear">Clear history</button>
+                    <div class="session-box" id="sessionBox">
+                        <h3>Your session</h3>
+                        <div class="session-row"><code id="sessionId"></code><button class="btn small" type="button" id="sessionCopy">Copy</button></div>
+                        <p class="small">Anyone with this ID can see these trips. Keep it private.</p>
+                        <p class="small session-status hidden" id="sessionStatus" role="status"></p>
+                        <label class="small" for="sessionRestore"><b>Restore a session</b></label>
+                        <div class="session-row"><input class="input" id="sessionRestore" placeholder="Paste a session ID" autocomplete="off" spellcheck="false" maxlength="64" /><button class="btn small" type="button" id="sessionRestoreGo">Restore</button></div>
+                        <div class="session-row"><button class="btn small" type="button" id="sessionDelete">Delete this session</button></div>
+                    </div>
                 </section>
                 <section class="saved-banner hidden" id="savedBanner" role="note">
                     <span class="saved-tag" id="savedTag">Saved example</span>
@@ -789,6 +829,7 @@
             const projectLayer = L.layerGroup().addTo(map);
             const sliderLayer = L.layerGroup().addTo(map);
             const labelLayer = L.layerGroup().addTo(map);
+            const leaderLayer = L.layerGroup().addTo(map); // thin lines from a nudged hotspot marker to its true point
             const spotLayer = L.layerGroup().addTo(map);
             const pinLayer = L.layerGroup().addTo(map);
 
@@ -813,6 +854,33 @@
             }
             const riskColor = (v) => (v < 0.5 ? COLORS.low : v < 1.5 ? COLORS.mid : COLORS.high);
 
+            // Where routes share a street they are drawn side by side, SHARED_GAP px apart, with the recommended
+            // route in the middle (unshifted) so it stays on the true street
+            const SHARED_GAP = 5;
+            const segKey = (seg) => { const a = seg[0], b = seg[seg.length - 1], k = (q) => `${q[0].toFixed(5)},${q[1].toFixed(5)}`; return [k(a), k(b)].sort().join("|"); };
+            function sharedOffsets(routes, recommended) {
+                const users = new Map();
+                for (const r of routes) for (const seg of r.line) { const k = segKey(seg); users.set(k, [...(users.get(k) || []), r]); }
+                const out = new Map();
+                for (const r of routes) out.set(r, r.line.map((seg) => {
+                    const on = users.get(segKey(seg));
+                    if (on.length < 2) return 0;
+                    const others = on.filter((x) => x !== recommended);
+                    const slots = on.includes(recommended) ? [0, -1, 1] : on.length === 2 ? [-0.5, 0.5] : [-1, 0, 1];
+                    return SHARED_GAP * (r === recommended ? 0 : slots[(on.includes(recommended) ? 1 : 0) + others.indexOf(r)]);
+                }));
+                return out;
+            }
+            // A line shifted sideways by `shift` screen pixels (left of the direction of travel), as lat/lngs
+            function shifted(seg, shift) {
+                if (!shift) return seg;
+                const pts = seg.map((q) => map.latLngToLayerPoint(q));
+                return pts.map((p, i) => {
+                    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+                    const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+                    return map.layerPointToLatLng(L.point(p.x - (dy / len) * shift, p.y + (dx / len) * shift));
+                });
+            }
             function drawRoutes() {
                 const data = state.map;
                 routeLayer.clearLayers();
@@ -821,18 +889,22 @@
                 const recommended = routes.find((r) => r.keys.includes(data.recommended_route));
                 const selected = routes.find((r) => r.route_ref === state.selected);
                 const showRisk = $("showRisk").checked;
-                // Others first, then the recommended route, then the selected one, so the risk coloring is never hidden
-                const order = routes.filter((r) => r !== recommended && r !== selected).concat(recommended && recommended !== selected ? [recommended] : [], selected ? [selected] : []);
+                const offsets = sharedOffsets(routes, recommended);
+                // Others first, then the selected one with its risk coloring, then the recommended route last and
+                // thickest, with a dark outline, so it is never hidden where routes overlap
+                const order = routes.filter((r) => r !== recommended && r !== selected).concat(selected && selected !== recommended ? [selected] : [], recommended ? [recommended] : []);
                 for (const r of order) {
                     const group = L.layerGroup();
                     const weight = r === recommended ? 8 : 5;
                     const routeColor = state.colors[r.route_ref];
                     const pick = () => selectRoute(r.route_ref);
-                    // A white halo under each line lifts it off the basemap
-                    for (const seg of r.line) L.polyline(seg, { color: "#fff", weight: weight + 6, opacity: 0.95, lineCap: "round", lineJoin: "round", interactive: false }).addTo(group);
-                    for (const seg of r.line) L.polyline(seg, { color: routeColor, weight, opacity: 1, lineCap: "round", lineJoin: "round" }).on("click", pick).addTo(group);
+                    const lines = r.line.map((seg, i) => shifted(seg, offsets.get(r)[i]));
+                    // A white halo under each line lifts it off the basemap; the recommended route also gets a navy outline
+                    for (const seg of lines) L.polyline(seg, { color: "#fff", weight: weight + 6, opacity: 0.95, lineCap: "round", lineJoin: "round", interactive: false }).addTo(group);
+                    if (r === recommended) for (const seg of lines) L.polyline(seg, { color: "#0b1f3a", weight: weight + 3, opacity: 1, lineCap: "round", lineJoin: "round", interactive: false }).addTo(group);
+                    for (const seg of lines) L.polyline(seg, { color: routeColor, weight, opacity: 1, lineCap: "round", lineJoin: "round" }).on("click", pick).addTo(group);
                     if (r === selected && showRisk) {
-                        r.line.forEach((seg, i) => L.polyline(seg, { color: riskColor(r.segment_risk[i]), weight: Math.max(2.5, weight - 4), opacity: 1 }).on("click", pick).addTo(group));
+                        lines.forEach((seg, i) => L.polyline(seg, { color: riskColor(r.segment_risk[i]), weight: Math.max(2.5, weight - 4), opacity: 1 }).on("click", pick).addTo(group));
                     }
                     group.addTo(routeLayer);
                     state.layers[r.route_ref] = group;
@@ -884,7 +956,10 @@
                         .addTo(labelLayer);
                 }
             }
-            map.on("zoomend", () => layoutSpots());
+            map.on("zoomend", () => {
+                if (state?.map && routeLayer.getLayers().length) drawRoutes(); // side-by-side shifts are in screen pixels
+                layoutSpots();
+            });
             map.on("moveend", () => drawLabels());
 
             function drawLegend(routes, recommended, selected) {
@@ -916,9 +991,26 @@
             }
             $("showRisk").addEventListener("change", () => state?.map && selectRoute(state.selected));
 
+            // Meters from a point to the nearest of the drawn routes' lines (their true geometry)
+            function metersToRoutes(lat, lon) {
+                const k = Math.cos((lat * Math.PI) / 180), M = 111320;
+                let best = Infinity;
+                for (const r of distinctRoutes(state.map)) for (const seg of r.line) for (let i = 1; i < seg.length; i++) {
+                    const ax = seg[i - 1][1] * k, ay = seg[i - 1][0], bx = seg[i][1] * k, by = seg[i][0], px = lon * k, py = lat;
+                    const dx = bx - ax, dy = by - ay, len = dx * dx + dy * dy;
+                    const t = len ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len)) : 0;
+                    best = Math.min(best, Math.hypot(px - ax - t * dx, py - ay - t * dy) * M);
+                }
+                return best;
+            }
+            const SPOT_ON_ROUTE_M = 15; // a stretch farther than this from every drawn route isn't shown
+            const SPOT_NUDGE_PX = 12; // the most a marker moves off its true point to stay readable
             function drawSpots(spots) {
                 spotLayer.clearLayers();
+                leaderLayer.clearLayers();
                 for (const s of spots) {
+                    s.marker = null;
+                    if (!(metersToRoutes(s.lat, s.lon) <= SPOT_ON_ROUTE_M)) continue;
                     const icon = L.divIcon({ className: "", html: `<div class="spot-pin">${s.number}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] });
                     s.marker = L.marker([s.lat, s.lon], { icon, zIndexOffset: 1000 })
                         .bindPopup(`<b>${s.number}. ${escapeHtml(s.street)}</b><br>${s.crashes.n} crashes since 2021, about ${s.similar_streets_expected} expected on similar streets<br>Main cause: ${escapeHtml(s.main_cause || "not recorded")}`)
@@ -927,23 +1019,36 @@
                 layoutSpots();
                 drawLabels();
             }
-            // Markers closer than a marker's width at this zoom are spread around their middle, so every number shows
+            // Markers that would overlap are pushed apart, but never more than SPOT_NUDGE_PX from their true point,
+            // and a thin leader line runs from each nudged marker to its true point on the route
             function layoutSpots() {
-                const spots = state?.map?.hotspots || [];
-                const placed = spots.filter((s) => s.marker).map((s) => ({ s, p: map.latLngToContainerPoint([s.lat, s.lon]) }));
-                const groups = [];
-                for (const item of placed) {
-                    const g = groups.find((g) => g.some((o) => o.p.distanceTo(item.p) < 32));
-                    g ? g.push(item) : groups.push([item]);
+                leaderLayer.clearLayers();
+                const items = (state?.map?.hotspots || []).filter((s) => s.marker).map((s) => {
+                    const p = map.latLngToContainerPoint([s.lat, s.lon]);
+                    return { s, home: p, x: p.x, y: p.y };
+                });
+                for (let round = 0; round < 40; round++) {
+                    for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) {
+                        const a = items[i], b = items[j];
+                        let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+                        if (d >= 26) continue;
+                        if (d < 0.01) { dx = 1; dy = 0; d = 1; }
+                        const push = (26 - d) / 2;
+                        a.x -= (dx / d) * push; a.y -= (dy / d) * push;
+                        b.x += (dx / d) * push; b.y += (dy / d) * push;
+                    }
+                    for (const o of items) {
+                        const dx = o.x - o.home.x, dy = o.y - o.home.y, d = Math.hypot(dx, dy);
+                        if (d > SPOT_NUDGE_PX) { o.x = o.home.x + (dx / d) * SPOT_NUDGE_PX; o.y = o.home.y + (dy / d) * SPOT_NUDGE_PX; }
+                    }
                 }
-                for (const g of groups) {
-                    if (g.length === 1) { g[0].s.marker.setLatLng([g[0].s.lat, g[0].s.lon]); continue; }
-                    const cx = g.reduce((a, o) => a + o.p.x, 0) / g.length, cy = g.reduce((a, o) => a + o.p.y, 0) / g.length;
-                    const radius = 14 + 6 * g.length;
-                    g.forEach((o, i) => {
-                        const angle = -Math.PI / 2 + (2 * Math.PI * i) / g.length;
-                        o.s.marker.setLatLng(map.containerPointToLatLng([cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)]));
-                    });
+                for (const o of items) {
+                    const at = map.containerPointToLatLng([o.x, o.y]);
+                    o.s.marker.setLatLng(at);
+                    if (Math.hypot(o.x - o.home.x, o.y - o.home.y) > 1) {
+                        L.polyline([[o.s.lat, o.s.lon], at], { color: "#0b1f3a", weight: 1.5, opacity: 0.9, interactive: false }).addTo(leaderLayer);
+                        L.circleMarker([o.s.lat, o.s.lon], { radius: 3, color: "#fff", weight: 1.5, fillColor: "#0b1f3a", fillOpacity: 1, interactive: false }).addTo(leaderLayer);
+                    }
                 }
             }
 
@@ -1237,30 +1342,46 @@
                 return (Number(m[1]) % 12) + (m[2].toLowerCase() === "pm" ? 12 : 0);
             }
             const hourName = (h) => (h === 0 ? "12am" : h === 12 ? "noon" : `${h % 12}${h < 12 ? "am" : "pm"}`);
+            // Both charts share one frame: CHART_TOP of room above the plot for labels, bars and points between 0 and
+            // CHART_H, the baseline at CHART_H, and tick labels below it
+            const CHART_TOP = 14, CHART_H = 44, CHART_BOTTOM = 18, CHART_INK = "#4b5767", CHART_BAR = "#8794a6";
             function hourChart(t) {
-                const ride = rideHour(), max = Math.max(...t.by_hour, 1), H = 44, W = 10;
+                const ride = rideHour(), max = Math.max(...t.by_hour, 1), H = CHART_H, W = 10;
                 const bars = t.by_hour.map((n, h) => {
                     const height = n ? Math.max(2, (n / max) * H) : 0;
-                    const fill = h === ride ? "var(--orange)" : "#8794a6";
+                    const fill = h === ride ? "var(--orange)" : CHART_BAR;
                     return `<g><rect x="${h * W}" y="0" width="${W}" height="${H}" fill="transparent"><title>${hourName(h)} to ${hourName((h + 1) % 24)}: ${n} crash${n === 1 ? "" : "es"}${h === ride ? " (your ride time)" : ""}</title></rect>`
                         + (height ? `<path d="M${h * W + 1},${H} v-${height - 2} q0,-2 2,-2 h4 q2,0 2,2 v${height - 2} z" fill="${fill}" pointer-events="none"/>` : "") + "</g>";
                 }).join("");
-                const ticks = [0, 6, 12, 18].map((h) => `<text x="${h * W + 1}" y="${H + 12}" font-size="9" fill="var(--faint)">${hourName(h)}</text>`).join("");
+                const ticks = [0, 6, 12, 18].map((h) => `<text x="${h * W + 1}" y="${H + 13}" font-size="9" fill="var(--faint)">${hourName(h)}</text>`).join("");
                 const rideTop = ride != null ? H - (t.by_hour[ride] ? Math.max(2, (t.by_hour[ride] / max) * H) : 0) : 0;
                 const mark = ride != null ? `<text x="${ride * W + 5}" y="${rideTop - 3}" font-size="9" font-weight="700" fill="var(--orange)" text-anchor="middle">you</text>` : "";
                 return svg(`<line x1="0" x2="${24 * W}" y1="${H}" y2="${H}" stroke="var(--line)"/>${bars}${ticks}${mark}`,
-                    `viewBox="0 -2 ${24 * W} ${H + 16}" class="hours" role="img" aria-label="Crashes on this route by hour of day since 2021"`);
+                    `viewBox="0 ${-CHART_TOP} ${24 * W} ${CHART_TOP + H + CHART_BOTTOM}" class="hours" role="img" aria-label="Crashes on this route by hour of day since 2021"`);
             }
+            // Crashes per year: a point per year, evenly spaced with 12 px of padding at each side, the count above
+            // each point and the two-digit year below the baseline. The current year is partial: a hollow point,
+            // scaled to a full year, reached by a dashed segment.
             function yearSpark(t) {
-                const pts = t.by_year, max = Math.max(...pts.map((p) => p.per_full_year), 1), W = 120, H = 30, step = W / (pts.length - 1);
-                const xy = pts.map((p, i) => [i * step, H - (p.per_full_year / max) * (H - 4) + 2]);
-                const full = xy.slice(0, -1).map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-                const [px, py] = xy[xy.length - 1], [qx, qy] = xy[xy.length - 2];
-                const dots = pts.map((p, i) => `<circle cx="${xy[i][0]}" cy="${xy[i][1]}" r="${p.partial ? 3 : 2.2}" fill="${p.partial ? "#fff" : "#4b5767"}" stroke="#4b5767" stroke-width="1.5"><title>${p.year}: ${p.crashes} crash${p.crashes === 1 ? "" : "es"}${p.partial ? ` so far (about ${Math.round(p.per_full_year)} for a full year)` : ""}</title></circle>`).join("");
-                const labels = `<text x="0" y="${H + 11}" font-size="9" fill="var(--faint)">${pts[0].year}</text><text x="${W}" y="${H + 11}" font-size="9" fill="var(--faint)" text-anchor="end">${pts[pts.length - 1].year}*</text>`;
-                return svg(`<polyline points="${full}" fill="none" stroke="#4b5767" stroke-width="2" stroke-linejoin="round"/>`
-                    + `<line x1="${qx}" y1="${qy}" x2="${px}" y2="${py}" stroke="#4b5767" stroke-width="2" stroke-dasharray="3 3"/>${dots}${labels}`,
-                    `viewBox="-4 -2 ${W + 8} ${H + 14}" class="years" role="img" aria-label="Crashes on this route per year since ${pts[0].year}"`);
+                const pts = t.by_year, PAD = 12, STEP = 30, W = PAD * 2 + STEP * (pts.length - 1), H = CHART_H;
+                const max = Math.max(...pts.map((p) => p.per_full_year), 1), TOP = 8; // 8 px under the top for the highest point
+                const xy = pts.map((p, i) => [PAD + i * STEP, H - 6 - (p.per_full_year / max) * (H - 6 - TOP)]);
+                const at = ([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`;
+                const done = pts.filter((p) => !p.partial).length;
+                const solid = xy.slice(0, done).map(at).join(" ");
+                const dashed = done < pts.length && done > 0 ? `<polyline points="${xy.slice(done - 1).map(at).join(" ")}" fill="none" stroke="${CHART_INK}" stroke-width="2" stroke-dasharray="3 3"/>` : "";
+                const tip = (p) => `${p.year}: ${p.crashes} crash${p.crashes === 1 ? "" : "es"}${p.partial ? ` so far (about ${Math.round(p.per_full_year)} for a full year)` : ""}`;
+                const count = (p) => (p.partial ? `~${Math.round(p.per_full_year)}` : `${p.crashes}`);
+                const marks = pts.map((p, i) => {
+                    const [x, y] = xy[i];
+                    return `<g class="yr"><rect x="${x - STEP / 2}" y="${-CHART_TOP}" width="${STEP}" height="${CHART_TOP + H + CHART_BOTTOM}" fill="transparent"><title>${tip(p)}</title></rect>`
+                        + `<circle cx="${x}" cy="${y.toFixed(1)}" r="${p.partial ? 3 : 2.5}" fill="${p.partial ? "#fff" : CHART_INK}" stroke="${CHART_INK}" stroke-width="1.5" pointer-events="none"/>`
+                        + `<text x="${x}" y="${(y - 6).toFixed(1)}" font-size="9" font-weight="600" fill="${CHART_INK}" text-anchor="middle" pointer-events="none">${count(p)}</text>`
+                        + `<text x="${x}" y="${H + 13}" font-size="9" fill="var(--faint)" text-anchor="middle" pointer-events="none">${String(p.year).slice(2)}${p.partial ? "*" : ""}</text></g>`;
+                }).join("");
+                return svg(`<line x1="${PAD - 8}" x2="${W - PAD + 8}" y1="${H}" y2="${H}" stroke="var(--line)"/>`
+                    + `<polyline points="${solid}" fill="none" stroke="${CHART_INK}" stroke-width="2" stroke-linejoin="round"/>${dashed}${marks}`,
+                    `viewBox="0 ${-CHART_TOP} ${W} ${CHART_TOP + H + CHART_BOTTOM}" class="years" role="img" aria-label="Crashes on this route per year since ${pts[0].year}: ${pts.map(tip).join("; ")}"`);
             }
             function timing(r) {
                 const t = r.timing;
@@ -1639,7 +1760,7 @@
                 if (!spots.length) return $("spotList").replaceChildren(el("p", { style: "margin:0" }, "No single stretch stands out from similar streets."));
                 $("spotList").replaceChildren(
                     el("p", { class: "small", style: "margin:0 0 12px" }, "These stretches had more crashes than similar streets, even allowing for chance. The numbers match the orange markers on the map. ", info("similar")),
-                    el("ol", { class: "spots" }, spots.map((s) => el("li", { onclick: (e) => { if (e.target.closest("button, a")) return; map.setView([s.lat, s.lon], 17); s.marker.openPopup(); } },
+                    el("ol", { class: "spots" }, spots.map((s) => el("li", { onclick: (e) => { if (e.target.closest("button, a")) return; map.setView([s.lat, s.lon], 17); s.marker?.openPopup(); } },
                         el("span", { class: "num" }, s.number),
                         el("div", {},
                             el("div", { class: "spot-title" }, s.street, cite([`edge ${s.edge_id}`, `collisions ${s.collision_ids.slice(0, 3).join(", ")}`])),
@@ -1708,7 +1829,7 @@
                 state = fresh();
                 if (keepSession && prior) Object.assign(state, { session: prior.session, trip: prior.trip, messages: prior.messages, context: prior.context });
                 closeTip();
-                for (const layer of [routeLayer, projectLayer, sliderLayer, labelLayer, spotLayer]) layer.clearLayers();
+                for (const layer of [routeLayer, projectLayer, sliderLayer, labelLayer, spotLayer, leaderLayer]) layer.clearLayers();
                 if (typeof closeRide === "function") closeRide();
                 if (typeof closeLoop === "function") closeLoop();
                 $("legendProject").classList.add("hidden");
@@ -1865,7 +1986,7 @@
                 if (e.declined) return showClarify(e.response, e.options || []);
                 if (e.distance) {
                     // A distance answer: route_options drew the routes while it ran, but the comparison is only offered
-                    for (const layer of [routeLayer, projectLayer, sliderLayer, labelLayer, spotLayer, pinLayer]) layer.clearLayers();
+                    for (const layer of [routeLayer, projectLayer, sliderLayer, labelLayer, spotLayer, leaderLayer, pinLayer]) layer.clearLayers();
                     for (const id of ["tiles", "summary", "sliderBox", "legend"]) $(id)?.classList.add("hidden");
                     $("routeCards").replaceChildren();
                     $("app").classList.remove("has-results");
@@ -1946,7 +2067,7 @@
                 // Never leave part of a run (routes drawn, cards, the agents' progress) under an error card
                 stopPreview(false);
                 closeTip();
-                for (const layer of [routeLayer, projectLayer, sliderLayer, labelLayer, spotLayer]) layer.clearLayers();
+                for (const layer of [routeLayer, projectLayer, sliderLayer, labelLayer, spotLayer, leaderLayer]) layer.clearLayers();
                 for (const id of ["tiles", "summary", "sliderBox", "spots", "changes", "notes", "limits", "followup", "clarify", "legend", "progress", "traceCard"]) $(id).classList.add("hidden");
                 $("legendProject").classList.add("hidden");
                 $("routeCards").replaceChildren();
@@ -2160,33 +2281,60 @@
 
             // --- Ride totals: miles and a rough calorie estimate. MET for cycling by average speed × weight × hours.
             // The weight is optional (70 kg by default) and stays in this browser. ---
-            const WEIGHT_KEY = "aveWeightKg";
+            // The weight is kept in kg; the box shows kg or lb. US browsers start in lb, others in kg, and the choice is kept.
+            const WEIGHT_KEY = "aveWeightKg", UNIT_KEY = "aveWeightUnit", LB_PER_KG = 2.2046, KG_RANGE = [30, 250];
             function weightKg() {
                 try {
                     const v = Number(localStorage.getItem(WEIGHT_KEY));
-                    return v >= 30 && v <= 250 ? v : 70;
+                    return v >= KG_RANGE[0] && v <= KG_RANGE[1] ? v : 70;
                 } catch { return 70; }
             }
+            function weightUnit() {
+                try {
+                    const u = localStorage.getItem(UNIT_KEY);
+                    if (u === "kg" || u === "lb") return u;
+                } catch {}
+                return navigator.language === "en-US" ? "lb" : "kg";
+            }
+            const shownWeight = (kg = weightKg(), unit = weightUnit()) => Math.round(unit === "lb" ? kg * LB_PER_KG : kg);
+            const toKg = (value, unit) => (unit === "lb" ? value / LB_PER_KG : value);
             const MET = (mph) => (mph < 10 ? 4 : mph <= 12 ? 6.8 : 8);
             function kcal(miles, minutes, kg = weightKg()) {
                 const hours = minutes / 60;
                 return hours > 0 ? Math.round(MET(miles / hours) * kg * hours) : 0;
             }
             function refreshKcal() {
+                const unit = weightUnit();
                 document.querySelectorAll(".kcal").forEach((n) => (n.textContent = kcal(+n.dataset.miles, +n.dataset.minutes)));
-                document.querySelectorAll(".weight-input").forEach((i) => document.activeElement !== i && (i.value = weightKg()));
+                document.querySelectorAll(".weight-input").forEach((i) => {
+                    if (document.activeElement !== i) i.value = shownWeight();
+                    i.min = shownWeight(KG_RANGE[0], unit);
+                    i.max = shownWeight(KG_RANGE[1], unit);
+                    i.setAttribute("aria-label", `Your weight in ${unit === "lb" ? "pounds" : "kilograms"}, for the calorie estimate`);
+                });
+                document.querySelectorAll(".unit-toggle button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.unit === unit)));
                 if (!$("historyCard").classList.contains("hidden")) renderHistory();
             }
+            // Switching units only changes how the box reads: the kg value, and so the calories, stay the same
+            function setUnit(unit) {
+                try { localStorage.setItem(UNIT_KEY, unit); } catch {}
+                refreshKcal();
+            }
             function weightField() {
-                return el("label", { class: "weight" }, "at",
-                    el("input", { class: "weight-input", type: "number", min: 30, max: 250, step: 1, value: weightKg(), inputmode: "numeric",
-                        "aria-label": "Your weight in kilograms, for the calorie estimate",
-                        onchange: (e) => {
-                            const v = Number(e.target.value);
-                            if (v >= 30 && v <= 250) { try { localStorage.setItem(WEIGHT_KEY, String(v)); } catch {} }
-                            refreshKcal();
-                            e.target.value = weightKg();
-                        } }), "kg");
+                const unit = weightUnit();
+                return el("span", { class: "weight" },
+                    el("label", {}, "at ",
+                        el("input", { class: "weight-input", type: "number", min: shownWeight(KG_RANGE[0], unit), max: shownWeight(KG_RANGE[1], unit), step: 1, value: shownWeight(), inputmode: "numeric",
+                            "aria-label": `Your weight in ${unit === "lb" ? "pounds" : "kilograms"}, for the calorie estimate`,
+                            onchange: (e) => {
+                                const kg = toKg(Number(e.target.value), weightUnit());
+                                if (kg >= KG_RANGE[0] - 0.01 && kg <= KG_RANGE[1] + 0.01) { try { localStorage.setItem(WEIGHT_KEY, String(Math.round(kg * 100) / 100)); } catch {} }
+                                refreshKcal();
+                                e.target.value = shownWeight();
+                            } })),
+                    " ",
+                    el("span", { class: "unit-toggle", role: "group", "aria-label": "Weight unit" },
+                        ...["kg", "lb"].map((u) => el("button", { type: "button", "data-unit": u, "aria-pressed": String(u === unit), onclick: () => setUnit(u) }, u))));
             }
             const kcalSpan = (miles, minutes) => el("b", { class: "kcal", "data-miles": miles, "data-minutes": minutes }, String(kcal(miles, minutes)));
             function rideTotals(miles, minutes, what) {
@@ -2260,7 +2408,7 @@
                 if (new URLSearchParams(location.search).has("ride")) history.replaceState(null, "", "/");
             }
 
-            // --- History: each finished trip, kept in this browser only (localStorage). Reopening one replays the
+            // --- History: each finished trip, kept in this browser (localStorage) and saved to its session. Reopening one replays the
             // saved result with no model call. ---
             const HISTORY_KEY = "aveHistory", HISTORY_MAX = 25;
             function readHistory() {
@@ -2286,7 +2434,10 @@
                     const { tool_calls, handoffs, usage, ...result } = e;
                     const entry = { id: Date.now(), at: Date.now(), trip, asked: state.asked, rec: { name: nameOf(rec), line, miles: rec.miles, minutes: rec.minutes }, result };
                     const same = (x) => x.trip.start === trip.start && x.trip.end === trip.end && x.trip.when === trip.when;
-                    writeHistory([entry, ...readHistory().filter((x) => !same(x))].slice(0, HISTORY_MAX));
+                    const before = readHistory();
+                    if (before.find(same)?.ridden) entry.ridden = true; // asking the same trip again keeps its "I rode this"
+                    writeHistory([entry, ...before.filter((x) => !same(x))].slice(0, HISTORY_MAX));
+                    syncSession();
                 } catch (err) {
                     console.warn("History not saved:", err); // History is a convenience: never let it break an answer
                 }
@@ -2312,13 +2463,192 @@
                 $("historyTotal").replaceChildren(list.length
                     ? el("span", {}, el("b", {}, `${miles.toFixed(1)} miles planned`), ` across ${list.length} trip${list.length === 1 ? "" : "s"} (the recommended route, one way)`)
                     : el("span", { class: "small" }, "No trips yet. Each trip you compare is added here."));
-                $("historyList").replaceChildren(...list.map((x) => el("button", { class: "hist-item", type: "button", "data-id": x.id, onclick: () => reopenHistory(x) },
+                renderStats(list);
+                $("historyList").replaceChildren(...list.map((x) => el("div", { class: "hist-row" }, el("button", { class: "hist-item", type: "button", "data-id": x.id, onclick: () => reopenHistory(x) },
                     lineThumb(x.rec.line),
                     el("div", {}, el("b", {}, `${x.trip.start} → ${x.trip.end}`),
-                        el("span", {}, `${shortDate(x.at)}${x.trip.when ? " · " + x.trip.when : ""} · ${x.rec.name} route · ${x.rec.miles} mi · about ${Math.round(x.rec.minutes)} min · about ${kcal(x.rec.miles, x.rec.minutes)} kcal`)))));
+                        el("span", {}, `${shortDate(x.at)}${x.trip.when ? " · " + x.trip.when : ""} · ${x.rec.name} route · ${x.rec.miles} mi · about ${Math.round(x.rec.minutes)} min · about ${kcal(x.rec.miles, x.rec.minutes)} kcal`))),
+                    el("label", { class: "rode" }, el("input", { type: "checkbox", checked: x.ridden ? "" : false, onchange: (e) => markRidden(x.id, e.target.checked) }), "I rode this"))));
                 $("historyClear").classList.toggle("hidden", !list.length);
+                $("sessionId").textContent = sessionId();
+            }
+            // --- Sessions: History saved on the server under a random ID, so it can be restored elsewhere ---
+            const SESSION_KEY = "aveSession", SESSION_RE = /^[A-Za-z0-9_-]{22}$/, SESSION_BYTES = 950000;
+            const SESSIONS_OFFLINE = "Sessions can't sync right now. History is still saved in this browser.";
+            function newSessionId() {
+                const bytes = crypto.getRandomValues(new Uint8Array(16)); // 128 random bits
+                return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+            }
+            function setSessionId(id) {
+                try { localStorage.setItem(SESSION_KEY, id); } catch {}
+                sessionMemo = id;
+            }
+            let sessionMemo = null; // when storage is blocked, the ID lasts for this page
+            function sessionId() {
+                let id = null;
+                try { id = localStorage.getItem(SESSION_KEY); } catch {}
+                if (!SESSION_RE.test(id || "")) id = SESSION_RE.test(sessionMemo || "") ? sessionMemo : newSessionId();
+                setSessionId(id);
+                return id;
+            }
+            function sessionStatus(text, bad = false) {
+                $("sessionStatus").textContent = text || "";
+                $("sessionStatus").classList.toggle("hidden", !text);
+                $("sessionStatus").classList.toggle("bad", bad);
+            }
+            const tripShape = (x) => x && typeof x.id === "number" && x.trip?.start && x.trip?.end && Array.isArray(x.rec?.line) && x.result?.map;
+            let syncTimer = null;
+            function syncSession() {
+                clearTimeout(syncTimer);
+                syncTimer = setTimeout(pushSession, 300);
+            }
+            async function pushSession() {
+                const all = readHistory();
+                let trips = all; // newest first: keep the newest trips that fit the server's size limit
+                while (trips.length && new Blob([JSON.stringify({ trips }, noLayers)]).size > SESSION_BYTES) trips = trips.slice(0, -1);
+                try {
+                    const r = await fetch(`/session/${sessionId()}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trips }, noLayers) });
+                    if (!r.ok) throw new Error(r.status);
+                    sessionStatus(trips.length < all.length ? `Saved the newest ${trips.length} of your ${all.length} trips to your session (a session holds about 1 MB).` : "");
+                } catch {
+                    sessionStatus(SESSIONS_OFFLINE, true);
+                }
+            }
+            async function restoreSession() {
+                const id = $("sessionRestore").value.trim();
+                if (!SESSION_RE.test(id)) return sessionStatus("No session found", true);
+                let r;
+                try { r = await fetch(`/session/${id}`); } catch { return sessionStatus(SESSIONS_OFFLINE, true); }
+                if (r.status === 503) return sessionStatus(SESSIONS_OFFLINE, true);
+                if (!r.ok) return sessionStatus("No session found", true);
+                const trips = ((await r.json()).trips || []).filter(tripShape);
+                const merged = [...trips, ...readHistory().filter((x) => !trips.some((t) => t.id === x.id))].sort((a, b) => b.at - a.at).slice(0, HISTORY_MAX);
+                setSessionId(id);
+                writeHistory(merged);
+                $("sessionRestore").value = "";
+                renderHistory();
+                sessionStatus(`Restored ${trips.length} trip${trips.length === 1 ? "" : "s"}. This browser now uses that session.`);
+                syncSession();
+            }
+            $("sessionRestoreGo").addEventListener("click", restoreSession);
+            $("sessionRestore").addEventListener("keydown", (e) => e.key === "Enter" && restoreSession());
+            $("sessionCopy").addEventListener("click", async () => {
+                try { await navigator.clipboard.writeText(sessionId()); $("sessionCopy").textContent = "Copied"; }
+                catch { getSelection().selectAllChildren($("sessionId")); $("sessionCopy").textContent = "Selected, copy it"; }
+                setTimeout(() => ($("sessionCopy").textContent = "Copy"), 2000);
+            });
+            $("sessionDelete").addEventListener("click", async (e) => {
+                const button = e.currentTarget;
+                if (!button.dataset.armed) { // two taps, like Clear history
+                    button.dataset.armed = "1";
+                    button.textContent = "Tap again to delete the session";
+                    return setTimeout(() => { delete button.dataset.armed; button.textContent = "Delete this session"; }, 4000);
+                }
+                delete button.dataset.armed;
+                button.textContent = "Delete this session";
+                try {
+                    const r = await fetch(`/session/${sessionId()}`, { method: "DELETE" });
+                    if (!r.ok) throw new Error(r.status);
+                } catch {
+                    return sessionStatus("Sessions can't sync right now, so the server copy wasn't deleted. Please try again later.", true);
+                }
+                clearTimeout(syncTimer);
+                try { localStorage.removeItem(HISTORY_KEY); } catch {}
+                setSessionId(newSessionId());
+                renderHistory();
+                sessionStatus("Session deleted, here and on the server. New trips go to a new session ID.");
+            });
+            // --- Your rides: stats from the History trips marked "I rode this", all computed here in the browser ---
+            function markRidden(id, ridden) {
+                writeHistory(readHistory().map((x) => (x.id === id ? { ...x, ridden } : x)));
+                syncSession();
+                renderHistory();
+            }
+            // Fixed distances for the comparisons, each with its source
+            const FUN = {
+                parkLoopMiles: 6.1, // Central Park's full loop drive: Central Park Conservancy, "Park Drives"
+                manhattanMiles: 13.4, // Manhattan's length, Inwood to the Battery: NYC Department of City Planning
+                brooklynBridgeMiles: 1.1, // the Brooklyn Bridge promenade, end to end: NYC DOT, "Brooklyn Bridge"
+                marathonMiles: 26.2, // the NYC Marathon: New York Road Runners
+                carGramsCO2PerMile: 400, // a typical passenger car, about 400 g CO2 per mile: US EPA, "Greenhouse Gas Emissions from a Typical Passenger Vehicle"
+            };
+            const EAST_RIVER_BRIDGE = /\b(Brooklyn|Manhattan|Williamsburg|Queensboro|Robert F\. Kennedy|Triborough|Roosevelt Island) Bridge\b/;
+            const BOROUGHS = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"];
+            // The route that was ridden: the recommended route of the saved result (the one History draws)
+            const riddenRoute = (x) => x.result?.map?.routes?.[x.result.map.recommended_route] || null;
+            function rideStats(list, kg = weightKg()) {
+                const rides = list.filter((x) => x.ridden && x.rec);
+                const miles = rides.reduce((a, x) => a + (+x.rec.miles || 0), 0);
+                const minutes = rides.reduce((a, x) => a + (+x.rec.minutes || 0), 0);
+                const lanes = (x) => riddenRoute(x)?.miles_by_lane || {};
+                const safeMiles = rides.reduce((a, x) => a + (lanes(x).protected || 0) + (lanes(x).path || 0), 0);
+                const boroughs = new Set();
+                for (const x of rides) {
+                    for (const st of riddenRoute(x)?.streets || []) if (BOROUGHS.includes(st.borough)) boroughs.add(st.borough);
+                    for (const end of [x.result?.map?.start?.label, x.result?.map?.end?.label, x.trip.start, x.trip.end])
+                        for (const b of BOROUGHS) if ((end || "").includes(b)) boroughs.add(b);
+                }
+                const longest = rides.reduce((a, x) => (!a || +x.rec.miles > +a.rec.miles ? x : a), null);
+                const counts = new Map();
+                for (const x of rides) { const k = `${x.trip.start} → ${x.trip.end}`; counts.set(k, (counts.get(k) || 0) + 1); }
+                const most = [...counts].sort((a, b) => b[1] - a[1])[0] || null;
+                const bridge = rides.some((x) => (riddenRoute(x)?.streets || []).some((st) => EAST_RIVER_BRIDGE.test(st.name)));
+                const greenwayRides = rides.filter((x) => (lanes(x).path || 0) >= 0.5 * (+x.rec.miles || Infinity)).length;
+                return {
+                    rides: rides.length, miles, minutes, kcal: rides.reduce((a, x) => a + kcal(+x.rec.miles, +x.rec.minutes, kg), 0), safeMiles,
+                    longest: longest && { trip: `${longest.trip.start} → ${longest.trip.end}`, miles: +longest.rec.miles },
+                    mostRidden: most && { trip: most[0], times: most[1] },
+                    boroughs: BOROUGHS.filter((b) => boroughs.has(b)),
+                    badges: { allBoroughs: boroughs.size === 5, bridgeCrosser: bridge, greenwayRegular: greenwayRides >= 3 },
+                };
+            }
+            const roughly = (n) => (n >= 10 ? Math.round(n).toLocaleString("en-US") : n >= 1 ? n.toFixed(1) : n.toFixed(2));
+            function comparisons(miles) {
+                if (!(miles > 0)) return [];
+                const marathons = miles / FUN.marathonMiles;
+                return [
+                    `About ${roughly(miles / FUN.parkLoopMiles)} laps of the Central Park loop.`,
+                    `About ${roughly(miles / FUN.manhattanMiles)} times the length of Manhattan.`,
+                    `Like crossing the Brooklyn Bridge ${roughly(miles / FUN.brooklynBridgeMiles)} times.`,
+                    marathons >= 1 ? `About ${roughly(marathons)} NYC Marathons.` : `About ${Math.round(marathons * 100)}% of an NYC Marathon.`,
+                    `About ${roughly((miles * FUN.carGramsCO2PerMile) / 1000)} kg of CO2 not emitted, compared with driving the same miles.`,
+                ];
+            }
+            const BADGES = [
+                { key: "allBoroughs", letter: "5", color: "var(--blue)", name: "All five boroughs" },
+                { key: "bridgeCrosser", letter: "B", color: "var(--orange)", name: "Bridge crosser" },
+                { key: "greenwayRegular", letter: "G", color: "#00933c", name: "Greenway regular" },
+            ];
+            let funTimer = null, funTurn = 0;
+            function renderStats(list) {
+                clearInterval(funTimer);
+                const box = $("rideStats"), st = rideStats(list);
+                const title = el("h3", { id: "rideStatsTitle" }, "Your rides");
+                if (!st.rides) return box.replaceChildren(title, el("p", { class: "small" }, "Mark a trip as ridden to start your stats."));
+                const fun = comparisons(st.miles), line = el("p", { class: "fun", "aria-live": "polite" });
+                const showFun = () => { line.textContent = [fun[funTurn % fun.length], fun[(funTurn + 1) % fun.length]].join(" "); funTurn += 2; };
+                showFun();
+                funTimer = setInterval(() => (document.body.contains(line) && !$("historyCard").classList.contains("hidden") ? showFun() : clearInterval(funTimer)), 7000);
+                const cell = (value, label) => el("div", {}, el("b", {}, value), el("span", {}, label));
+                box.replaceChildren(title,
+                    el("p", { class: "small" }, "Based on rides you marked as ridden."),
+                    el("div", { class: "stats-grid" },
+                        cell(String(st.rides), st.rides === 1 ? "ride" : "rides"),
+                        cell(roughly(st.miles), "miles"),
+                        cell(Math.round(st.minutes).toLocaleString("en-US"), "minutes"),
+                        cell(`~${st.kcal.toLocaleString("en-US")}`, "kcal, rough"),
+                        cell(roughly(st.safeMiles), "miles on protected lanes or paths")),
+                    el("div", { class: "ride-totals" }, el("span", { class: "small" }, "Calories use your weight:"), weightField()),
+                    el("ul", { class: "highlights" },
+                        el("li", {}, el("b", {}, "Longest ride: "), `${st.longest.trip}, ${st.longest.miles} mi`),
+                        el("li", {}, el("b", {}, "Most ridden: "), `${st.mostRidden.trip}, ${st.mostRidden.times} time${st.mostRidden.times === 1 ? "" : "s"}`),
+                        el("li", {}, el("b", {}, "Boroughs: "), st.boroughs.length ? st.boroughs.join(", ") : "none recorded")),
+                    line,
+                    el("div", { class: "badges" }, BADGES.map((b) => el("span", { class: `badge${st.badges[b.key] ? "" : " off"}`, title: st.badges[b.key] ? "Earned" : "Not yet" },
+                        el("i", { style: `background: ${b.color}`, "aria-hidden": "true" }, b.letter), b.name, st.badges[b.key] ? "" : el("span", { class: "visually-hidden" }, " (not yet)")))));
             }
             function openHistory() {
+                $("sessionId").textContent = sessionId();
                 renderHistory();
                 $("historyCard").classList.remove("hidden");
                 $("historyCard").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2330,6 +2660,7 @@
                     try { localStorage.removeItem(HISTORY_KEY); } catch {}
                     delete e.currentTarget.dataset.armed;
                     e.currentTarget.textContent = "Clear history";
+                    syncSession();
                     return renderHistory();
                 }
                 e.currentTarget.dataset.armed = "1";
