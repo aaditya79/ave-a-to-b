@@ -25,6 +25,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
+import pandas as pd
 import tools
 from context_panel import AgentContexts, PanelHooks, add_context_panel
 
@@ -1120,6 +1121,15 @@ async def followup(request: FollowupRequest, http: Request):
 
 
 _explore: dict = {}
+
+
+@app.get("/stats")
+def stats():
+    """The numbers in the page's stat strip, counted from the loaded data."""
+    # Every crash in the data, including the ones without coordinates that can't be placed on a street
+    crashes = len(pd.read_parquet(tools.DATA / "crashes.parquet", columns=["collision_id"]))
+    return {"crashes_since_2021": crashes, "street_segments": int(len(tools.edges)),
+            "routes_per_trip": 3}
 
 
 @app.get("/explore")

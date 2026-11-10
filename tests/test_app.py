@@ -382,3 +382,8 @@ def test_a_researcher_that_answers_on_retry_is_not_unchecked(monkeypatch):
     run = app.Research(hooks=app.TraceHooks(app.AgentContexts(), lambda event: None))
     assert asyncio.run(app.send_researcher(run, "infrastructure", "Check lanes", ["corridor:x"])).startswith("Broadway has 2 lanes")
     assert run.unchecked == []
+
+
+def test_stat_strip_counts_come_from_the_data():
+    s = client.get("/stats").json()
+    assert s == {"crashes_since_2021": 34465, "street_segments": 163383, "routes_per_trip": 3}  # README section 2
