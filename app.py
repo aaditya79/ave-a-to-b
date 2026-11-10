@@ -465,7 +465,7 @@ lane, a route called safest when safety_label isn't 'safest', a route called saf
 
 Return ok=true with no problems if everything matches. Otherwise list each problem in one line: what the
 draft says, what the results say, and the fix.""",
-    model=MODEL, model_settings=LOW_SETTINGS, output_type=Check,
+    model=MODEL, model_settings=SETTINGS, output_type=Check,  # default effort: at low it flagged numbers it had just confirmed, forcing Writer rewrites
 )
 
 CITED = re.compile(r"\b(?:route|corridor):[0-9a-f]{8}\b|\b\d+-\d+-\d+\b")

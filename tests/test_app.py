@@ -516,9 +516,10 @@ def test_cost_caps():
     assert app.QUESTIONS_PER_HOUR == 30 and app.MAX_FOLLOWUPS == 5
 
 
-def test_low_reasoning_effort_everywhere_but_the_writer():
+def test_low_reasoning_effort_except_the_verifier():
     low = lambda agent: agent.model_settings.extra_args.get("reasoning_effort")
-    assert low(app.lead) == low(app.verifier) == low(app.followup_agent) == "low"
+    assert low(app.lead) == low(app.followup_agent) == "low"
+    assert low(app.verifier) is None  # the model's default, as before the cost changes
     assert all(low(a) == "low" for a in app.RESEARCHERS.values())
     assert low(app.writer) == "low"  # unchanged: the Writer already ran at low
 
