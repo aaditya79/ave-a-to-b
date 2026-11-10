@@ -235,7 +235,8 @@ async def send_researcher(run: Research, researcher: str, task: str, refs: list[
         run.rounds += 1  # nobody is running: this call opens a new round
         if 1 < run.rounds <= MAX_ROUNDS:
             reason = gap.strip().rstrip(".")
-            if reason[:2].istitle() and not reason[:2].isupper():  # "We need ..." reads as "because we need ..."
+            first = reason.split()[0] if reason else ""
+            if first[:1].isupper() and not (len(first) > 1 and first.isupper()):  # "We need ..." -> "because we need ..."; keeps SIP
                 reason = reason[0].lower() + reason[1:]
             run.hooks.handoff("Lead", "Lead", "gap", f"Sent Round {run.rounds} because {reason or 'of a gap: ' + task}.", round=run.rounds)
     if run.rounds > MAX_ROUNDS:
