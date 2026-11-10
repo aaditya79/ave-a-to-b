@@ -705,6 +705,8 @@ def map_routes(routes: dict) -> dict:
                "line", "segment_risk", "turns", "minutes", "miles", "extra_minutes_vs_fastest", "relative_risk_vs_fastest",
                "route_ref", "miles_by_lane", "lower_confidence", "crashes_5yr", "corridors", "streets")}}
                for k, r in routes["routes"].items()}}
+    for r in out["routes"].values():
+        r["timing"] = tools.crash_timing(r["route_ref"])  # the hour chart and year sparkline on each card
     out["headline"] = headline(out)
     return out
 

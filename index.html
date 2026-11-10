@@ -250,6 +250,13 @@
             .tl-calls .tool { font-family: ui-monospace, Menlo, monospace; font-size: 13px; font-weight: 600; }
             .tl-calls .gist { color: var(--muted); margin-left: 14px; }
             .tl-calls pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; background: var(--bg); padding: 8px 10px; border-radius: 8px; font-size: 12px; margin: 6px 0 0; }
+            .timing { margin-top: 12px; }
+            .timing > summary { font-size: 14px; font-weight: 600; cursor: pointer; }
+            .timing-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; margin-top: 6px; }
+            .timing-grid svg { width: 100%; height: auto; display: block; overflow: visible; }
+            .timing-grid svg.years { max-width: 200px; }
+            .timing-grid p { margin: 6px 0 0; }
+            @media (max-width: 520px) { .timing-grid { grid-template-columns: 1fr; } }
             .tl-problems { margin: 4px 0 0; padding-left: 20px; font-size: 14px; }
 
             /* --- Drawer for agent findings and sources --- */
@@ -442,6 +449,7 @@
             const LANE_NAMES = { protected: "Protected", path: "Path", link: "Link", painted: "Painted", shared: "Shared", none: "No lane" };
             const LABEL = { fastest: "Fastest", balanced: "Balanced", lowest_risk: "Lowest risk" };
             const INFO = {
+                timing: "Police-reported crashes that hurt a cyclist on this route's streets since 2021. A busy hour has more riders as well as more crashes, so these show when crashes happen, not your odds at that hour. The latest year is partial, shown as a hollow dot and scaled to a full year for the trend.",
                 risk: "Expected police-reported bike crashes for each mile ridden on this route, compared with the fastest route. \"62% lower\" means about 0.38 times the fastest route's risk. It compares routes. It is not your personal odds.",
                 range: "Nobody counts riders on most streets, so we estimate how many use streets without bike lanes. We redo the math at half and at double that estimate. The range shows the lowest and highest result.",
                 count: "Crash counts go up and down by chance. The range is the count plus or minus two times its square root, which covers most of that chance variation.",
@@ -933,11 +941,55 @@
                             stat(isFastest ? "Baseline" : pct(risk.assumed), [isFastest ? "the others compare to this" : "crash risk vs. fastest", info("risk")])),
                         isFastest ? null : el("div", { class: "sure" }, `Range: ${pct(risk.half)} to ${pct(risk.double)}, depending on how many people ride streets without `, el("span", { style: "white-space:nowrap" }, "lanes. ", info("range"))),
                         laneBar(r),
+                        timing(r),
                         recommended ? exportRow(r) : el("details", { class: "menu" }, el("summary", { class: "btn small" }, "Open, download, or share ▾"), exportRow(r)),
                         el("details", { class: "streets" }, el("summary", {}, `All streets on this route (${r.streets.length})`),
                             el("ol", { class: "street-list" }, r.streets.map((s) => el("li", {}, `${s.name === "unnamed path" ? "Unnamed path" : s.name} · ${s.miles} mi`)))));
                     box.append(card);
                 }
+            }
+            // --- When crashes happen: a 24-hour bar chart and a per-year sparkline, both from code ---
+            const svg = (markup, attrs) => { const box = document.createElement("div"); box.innerHTML = `<svg ${attrs}>${markup}</svg>`; return box.firstChild; };
+            function rideHour() {
+                const when = state.context?.when || state.trip?.when || "";
+                const m = when.match(/(\d{1,2})(?::\d\d)?\s*(am|pm)/i);
+                if (!m) return null;
+                return (Number(m[1]) % 12) + (m[2].toLowerCase() === "pm" ? 12 : 0);
+            }
+            const hourName = (h) => (h === 0 ? "12am" : h === 12 ? "noon" : `${h % 12}${h < 12 ? "am" : "pm"}`);
+            function hourChart(t) {
+                const ride = rideHour(), max = Math.max(...t.by_hour, 1), H = 44, W = 10;
+                const bars = t.by_hour.map((n, h) => {
+                    const height = n ? Math.max(2, (n / max) * H) : 0;
+                    const fill = h === ride ? "var(--orange)" : "#8794a6";
+                    return `<g><rect x="${h * W}" y="0" width="${W}" height="${H}" fill="transparent"><title>${hourName(h)} to ${hourName((h + 1) % 24)}: ${n} crash${n === 1 ? "" : "es"}${h === ride ? " (your ride time)" : ""}</title></rect>`
+                        + (height ? `<path d="M${h * W + 1},${H} v-${height - 2} q0,-2 2,-2 h4 q2,0 2,2 v${height - 2} z" fill="${fill}" pointer-events="none"/>` : "") + "</g>";
+                }).join("");
+                const ticks = [0, 6, 12, 18].map((h) => `<text x="${h * W + 1}" y="${H + 12}" font-size="9" fill="var(--faint)">${hourName(h)}</text>`).join("");
+                const mark = ride != null ? `<text x="${Math.min(ride * W + 5, 24 * W - 2)}" y="${H + 12}" font-size="9" font-weight="700" fill="var(--text, #0b1f3a)" text-anchor="${ride > 20 ? "end" : "middle"}">${ride >= 3 && ride <= 21 && ![6, 12, 18].includes(ride) ? "you" : ""}</text>` : "";
+                return svg(`<line x1="0" x2="${24 * W}" y1="${H}" y2="${H}" stroke="var(--line)"/>${bars}${ticks}${mark}`,
+                    `viewBox="0 -2 ${24 * W} ${H + 16}" class="hours" role="img" aria-label="Crashes on this route by hour of day since 2021"`);
+            }
+            function yearSpark(t) {
+                const pts = t.by_year, max = Math.max(...pts.map((p) => p.per_full_year), 1), W = 120, H = 30, step = W / (pts.length - 1);
+                const xy = pts.map((p, i) => [i * step, H - (p.per_full_year / max) * (H - 4) + 2]);
+                const full = xy.slice(0, -1).map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+                const [px, py] = xy[xy.length - 1], [qx, qy] = xy[xy.length - 2];
+                const dots = pts.map((p, i) => `<circle cx="${xy[i][0]}" cy="${xy[i][1]}" r="${p.partial ? 3 : 2.2}" fill="${p.partial ? "#fff" : "#4b5767"}" stroke="#4b5767" stroke-width="1.5"><title>${p.year}: ${p.crashes} crash${p.crashes === 1 ? "" : "es"}${p.partial ? ` so far (about ${Math.round(p.per_full_year)} for a full year)` : ""}</title></circle>`).join("");
+                const labels = `<text x="0" y="${H + 11}" font-size="9" fill="var(--faint)">${pts[0].year}</text><text x="${W}" y="${H + 11}" font-size="9" fill="var(--faint)" text-anchor="end">${pts[pts.length - 1].year}*</text>`;
+                return svg(`<polyline points="${full}" fill="none" stroke="#4b5767" stroke-width="2" stroke-linejoin="round"/>`
+                    + `<line x1="${qx}" y1="${qy}" x2="${px}" y2="${py}" stroke="#4b5767" stroke-width="2" stroke-dasharray="3 3"/>${dots}${labels}`,
+                    `viewBox="-4 -2 ${W + 8} ${H + 14}" class="years" role="img" aria-label="Crashes on this route per year since ${pts[0].year}"`);
+            }
+            function timing(r) {
+                const t = r.timing;
+                if (!t || t.error) return null;
+                const ride = rideHour();
+                return el("details", { class: "timing", open: true },
+                    el("summary", {}, "When crashes happen on this route ", info("timing")),
+                    el("div", { class: "timing-grid" },
+                        el("div", {}, el("div", { class: "tl-label" }, `By hour of day${ride != null ? `, your ride at ${hourName(ride)} in orange` : ""}`), hourChart(t), el("p", { class: "small" }, t.hour_note)),
+                        el("div", {}, el("div", { class: "tl-label" }, `By year (*${t.by_year[t.by_year.length - 1].year} so far, scaled to a full year)`), yearSpark(t), el("p", { class: "small" }, t.year_note))));
             }
             const stat = (value, label) => el("div", { class: "stat" }, el("div", { class: "value" }, value), el("div", { class: "label" }, label));
             function laneBar(r) {

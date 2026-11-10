@@ -867,6 +867,67 @@ def standout_segments(edge_ids, limit: int = 5) -> dict:
             "finding": None if spots else "No single stretch stands out from similar streets."}
 
 
+# --- When crashes happen on a route: by hour of day, and by year ---
+
+DATA_END = crashes.crash_date.max()  # the last day in the crash data; its year is partial
+MIN_CRASHES_FOR_PATTERN = 10
+
+
+def _clock(hour: int) -> str:
+    hour %= 24
+    return "midnight" if hour == 0 else "noon" if hour == 12 else f"{hour % 12}{'am' if hour < 12 else 'pm'}"
+
+
+def _window(start: int) -> str:
+    """'5 to 7pm' for hours 17 and 18; '11am to 1pm' when it crosses noon."""
+    first, last = _clock(start), _clock(start + 2)
+    if first[-2:] == last[-2:] and first not in ("midnight", "noon") and last not in ("midnight", "noon"):
+        first = first[:-2]
+    return f"{first} to {last}"
+
+
+@safe
+def crash_timing(edge_ids) -> dict:
+    """Crashes that hurt a cyclist on these segments since 2021, by hour of day and by year, with one
+    plain sentence for each. The latest year is partial: its count is also scaled to a full year."""
+    ids = resolve(edge_ids)
+    found = crashes[crashes.edge_id.isin(ids)]
+    by_hour = found.hour.value_counts().reindex(range(24), fill_value=0).astype(int).tolist()
+    total = sum(by_hour)
+    if total < MIN_CRASHES_FOR_PATTERN:
+        hour_note = f"Only {total} crash{'' if total == 1 else 'es'} on this route since 2021, too few to show a pattern by hour."
+        peak = None
+    else:
+        pairs = [by_hour[h] + by_hour[(h + 1) % 24] for h in range(24)]
+        peak = int(max(range(24), key=lambda h: pairs[h]))
+        flat = total * 2 / 24  # a 2-hour window's share if crashes were spread evenly
+        # 3 × √ rather than 2 × √: the busiest of 24 windows always looks high by chance
+        if pairs[peak] > flat + 3 * np.sqrt(flat):
+            hour_note = (f"Crashes on this route are most common {_window(peak)}: {pairs[peak]} of {total} since 2021 "
+                         f"happened then.")
+        else:
+            peak = None
+            hour_note = f"Crashes on this route are spread through the day, with no 2-hour window standing out ({total} since 2021)."
+    years = list(range(2021, DATA_END.year + 1))
+    counts = found.year.value_counts().reindex(years, fill_value=0).astype(int)
+    share = DATA_END.day_of_year / (366 if DATA_END.is_leap_year else 365)
+    by_year = [{"year": y, "crashes": int(counts[y]), "partial": y == DATA_END.year,
+                "per_full_year": round(counts[y] / share, 1) if y == DATA_END.year else int(counts[y])} for y in years]
+    # Clear trend: the last two years against the first two, beyond n ± 2 × √n noise for the difference
+    early = sum(r["per_full_year"] for r in by_year[:2])
+    late = sum(r["per_full_year"] for r in by_year[-2:])
+    if early + late >= MIN_CRASHES_FOR_PATTERN and abs(late - early) > 2 * np.sqrt(early + late):
+        direction = "up" if late > early else "down"
+        year_note = (f"Crashes went {direction}: about {early / 2:.0f} a year in {years[0]} and {years[1]}, about {late / 2:.0f} a year in "
+                     f"{years[-2]} and {years[-1]} ({years[-1]} scaled to a full year). Ridership changed too, so this isn't a change in risk per rider.")
+    else:
+        direction = "none"
+        year_note = "No clear trend in crashes per year since 2021."
+    return {"crashes": total, "by_hour": by_hour, "peak_start_hour": peak, "hour_note": hour_note,
+            "by_year": by_year, "trend": direction, "year_note": year_note,
+            "data_through": str(DATA_END.date()), "partial_year_share": round(float(share), 3)}
+
+
 # --- Area questions ("Is biking in Queens safe?") ---
 
 AREAS = {"manhattan": "Manhattan", "brooklyn": "Brooklyn", "queens": "Queens", "bronx": "Bronx", "the bronx": "Bronx",

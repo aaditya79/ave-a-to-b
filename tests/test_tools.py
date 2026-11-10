@@ -367,3 +367,47 @@ def test_queens_answer_carries_the_riders_caveat():
     assert "fewer people riding there, not only safer streets" in text
     assert "risk per rider can't be compared between boroughs" in text
     assert "safer" not in text.replace("not only safer streets", "") and "less safe" not in text
+
+
+# --- When crashes happen on a route ---
+
+def test_crash_timing_counts_by_hour_and_year(trip):
+    t = tools.crash_timing(trip["routes"]["fastest"]["route_ref"])
+    edge_ids = tools.resolve(trip["routes"]["fastest"]["route_ref"])
+    on_route = tools.crashes[tools.crashes.edge_id.isin(edge_ids)]
+    assert len(t["by_hour"]) == 24 and sum(t["by_hour"]) == t["crashes"] == len(on_route)
+    assert t["by_hour"][17] == int((on_route.hour == 17).sum())
+    years = [y["year"] for y in t["by_year"]]
+    assert years[0] == 2021 and years[-1] == tools.DATA_END.year and sum(y["crashes"] for y in t["by_year"]) == t["crashes"]
+    last = t["by_year"][-1]
+    assert last["partial"] and last["per_full_year"] >= last["crashes"] and not t["by_year"][0]["partial"]
+
+
+def test_hour_sentence_names_a_window_only_when_it_stands_out(monkeypatch):
+    assert tools._window(17) == "5 to 7pm" and tools._window(11) == "11am to 1pm" and tools._window(23) == "11pm to 1am"
+    edge, original = tools.edges.index[0], tools.crashes
+
+    def timing_for(hours):
+        rows = original.head(len(hours)).assign(hour=hours, edge_id=edge, year=2023)
+        monkeypatch.setattr(tools, "crashes", rows)
+        return tools.crash_timing([edge])
+    evening = timing_for([17] * 12 + [18] * 10 + list(range(24)))
+    assert evening["peak_start_hour"] == 17 and evening["hour_note"].startswith("Crashes on this route are most common 5 to 7pm: 24 of 46")
+    even = timing_for(list(range(24)) * 2)
+    assert even["peak_start_hour"] is None and "spread through the day" in even["hour_note"]
+
+
+def test_year_note_says_no_clear_trend_for_steady_counts(trip):
+    for name in ("fastest", "balanced"):
+        t = tools.crash_timing(trip["routes"][name]["route_ref"])
+        assert t["trend"] in ("up", "down", "none")
+        if t["trend"] == "none":
+            assert t["year_note"] == "No clear trend in crashes per year since 2021."
+        else:
+            assert "Ridership changed too" in t["year_note"]
+
+
+def test_too_few_crashes_gives_no_hour_pattern():
+    quiet = tools.edges[tools.edges.crashes == 0].index[:5].tolist()
+    t = tools.crash_timing(quiet)
+    assert t["crashes"] == 0 and t["peak_start_hour"] is None and "too few" in t["hour_note"]
