@@ -59,6 +59,7 @@
                 .app { display: flex; flex-direction: column; height: auto; }
                 .mapwrap { order: -1; height: 30vh; flex: none; transition: height 0.2s; }
                 .app.has-results .mapwrap { height: 45vh; }
+                .app.previewing .mapwrap { height: 70vh; }
                 .panel { overflow: visible; padding: 12px 16px 48px; gap: 12px; }
                 #how { order: 2; }
                 .stat .value { font-size: 18px; }
@@ -293,6 +294,13 @@
             .explore-body i { display: inline-block; width: 20px; height: 4px; border-radius: 2px; flex: none; }
             .explore-body i.truck { height: 0; border-top: 3px dotted #8b5e34; border-radius: 0; }
             .explore-body p { margin: 6px 0 0; }
+            .preview-btn { margin-top: 12px; width: 100%; }
+            .preview-bar { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 700; width: min(440px, calc(100% - 24px)); background: #fff; border-radius: 12px; box-shadow: var(--shadow); padding: 12px 14px; }
+            .preview-text { font-size: 15px; min-height: 1.4em; }
+            .preview-progress { height: 4px; background: var(--line); border-radius: 2px; margin: 10px 0; overflow: hidden; }
+            .preview-progress span { display: block; height: 100%; width: 0; background: var(--orange); }
+            .preview-actions { display: flex; gap: 8px; justify-content: flex-end; }
+            .rider-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--orange); border: 3px solid #fff; box-shadow: 0 1px 6px rgba(0, 0, 0, 0.35); }
             .legend > summary { font-weight: 700; color: var(--navy); font-size: 14px; }
             .legend h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 10px 0 6px; font-weight: 600; }
             .legend .item { display: flex; align-items: center; gap: 8px; margin: 4px 0; line-height: 1.3; }
@@ -438,6 +446,14 @@
 
             <div class="mapwrap">
                 <div id="map"></div>
+                <div class="preview-bar hidden" id="previewBar" role="status" aria-live="polite">
+                    <div class="preview-text" id="previewText"></div>
+                    <div class="preview-progress"><span id="previewFill"></span></div>
+                    <div class="preview-actions">
+                        <button class="btn small" type="button" id="previewPause">Pause</button>
+                        <button class="btn small" type="button" id="previewExit">Exit preview</button>
+                    </div>
+                </div>
                 <details class="explore" id="explore">
                     <summary><label class="switch" onclick="event.stopPropagation()"><input type="checkbox" id="exploreOn" /> Explore the city</label></summary>
                     <div class="explore-body">
@@ -1012,6 +1028,7 @@
                         isFastest ? null : el("div", { class: "sure" }, `Range: ${pct(risk.half)} to ${pct(risk.double)}, depending on how many people ride streets without `, el("span", { style: "white-space:nowrap" }, "lanes. ", info("range"))),
                         laneBar(r),
                         timing(r),
+                        recommended ? el("button", { class: "btn preview-btn", type: "button", onclick: () => previewRide(r) }, "▶ Preview ride") : null,
                         recommended ? exportRow(r) : el("details", { class: "menu" }, el("summary", { class: "btn small" }, "Open, download, or share ▾"), exportRow(r)),
                         el("details", { class: "streets" }, el("summary", {}, `All streets on this route (${r.streets.length})`),
                             el("ol", { class: "street-list" }, r.streets.map((s) => el("li", {}, `${s.name === "unnamed path" ? "Unnamed path" : s.name} · ${s.miles} mi`)))));
@@ -1036,7 +1053,8 @@
                         + (height ? `<path d="M${h * W + 1},${H} v-${height - 2} q0,-2 2,-2 h4 q2,0 2,2 v${height - 2} z" fill="${fill}" pointer-events="none"/>` : "") + "</g>";
                 }).join("");
                 const ticks = [0, 6, 12, 18].map((h) => `<text x="${h * W + 1}" y="${H + 12}" font-size="9" fill="var(--faint)">${hourName(h)}</text>`).join("");
-                const mark = ride != null ? `<text x="${Math.min(ride * W + 5, 24 * W - 2)}" y="${H + 12}" font-size="9" font-weight="700" fill="var(--text, #0b1f3a)" text-anchor="${ride > 20 ? "end" : "middle"}">${ride >= 3 && ride <= 21 && ![6, 12, 18].includes(ride) ? "you" : ""}</text>` : "";
+                const rideTop = ride != null ? H - (t.by_hour[ride] ? Math.max(2, (t.by_hour[ride] / max) * H) : 0) : 0;
+                const mark = ride != null ? `<text x="${ride * W + 5}" y="${rideTop - 3}" font-size="9" font-weight="700" fill="var(--orange)" text-anchor="middle">you</text>` : "";
                 return svg(`<line x1="0" x2="${24 * W}" y1="${H}" y2="${H}" stroke="var(--line)"/>${bars}${ticks}${mark}`,
                     `viewBox="0 -2 ${24 * W} ${H + 16}" class="hours" role="img" aria-label="Crashes on this route by hour of day since 2021"`);
             }
@@ -1079,6 +1097,100 @@
                     el("button", { class: "btn small", type: "button", onclick: () => downloadGpx(r), title: "The exact route, for a bike computer or app" }, "Download GPX"),
                     el("button", { class: "btn small", type: "button", onclick: (e) => share(r, e.currentTarget) }, "Share"));
             }
+            // --- Ride preview: the camera follows the recommended route and stops at each stretch to watch ---
+            const PREVIEW_METERS_PER_SECOND = 220; // a 6-mile route takes about 45 seconds
+            const PREVIEW_STOP_MS = 2200;
+            let preview = null;
+            function previewRide(r) {
+                stopPreview(false);
+                const pts = orderedPoints(r);
+                if (pts.length < 2) return;
+                const along = [0];
+                for (let i = 1; i < pts.length; i++) along.push(along[i - 1] + map.distance(pts[i - 1], pts[i]));
+                // The stretches on this route, in riding order, at the point of the route nearest each marker
+                const onRoute = (state.map.hotspots || []).filter((s) => r.keys.some((k) => s.routes?.includes(LABEL[k])));
+                const stops = onRoute.map((s) => {
+                    let best = 0, bestD = Infinity;
+                    pts.forEach((q, i) => { const d = map.distance(q, [s.lat, s.lon]); if (d < bestD) { bestD = d; best = i; } });
+                    return { spot: s, at: along[best], done: false };
+                }).filter((x) => x).sort((a, b) => a.at - b.at);
+                const rider = L.marker(pts[0], { icon: L.divIcon({ className: "", html: '<div class="rider-dot"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }), zIndexOffset: 2000, interactive: false }).addTo(map);
+                preview = { pts, along, stops, rider, travelled: 0, paused: false, holdUntil: 0, last: null, frame: null, total: along[along.length - 1],
+                    legendWasOpen: $("legend").open, phone: matchMedia("(max-width: 960px)").matches };
+                $("legend").open = false;
+                $("app").classList.add("previewing");
+                setTimeout(() => map.invalidateSize(), 250);
+                $("previewBar").classList.remove("hidden");
+                $("previewPause").textContent = "Pause";
+                $("previewText").textContent = `Riding the ${nameOf(r)} route: ${stops.length} stretch${stops.length === 1 ? "" : "es"} to watch.`;
+                if (matchMedia("(max-width: 960px)").matches) window.scrollTo({ top: 0, behavior: "smooth" });
+                map.setView(pts[0], 16, { animate: true });
+                setTimeout(() => preview && (preview.frame = requestAnimationFrame(stepPreview)), 700);
+            }
+            function pointAt(distance) {
+                const { pts, along } = preview;
+                let i = along.findIndex((a) => a >= distance);
+                if (i <= 0) return i === 0 ? pts[0] : pts[pts.length - 1];
+                const t = (distance - along[i - 1]) / (along[i] - along[i - 1] || 1);
+                return [pts[i - 1][0] + t * (pts[i][0] - pts[i - 1][0]), pts[i - 1][1] + t * (pts[i][1] - pts[i - 1][1])];
+            }
+            function stepPreview(now) {
+                if (!preview) return;
+                const p = preview;
+                const dt = p.last == null ? 0 : Math.min(now - p.last, 100);
+                p.last = now;
+                if (!p.paused && now >= p.holdUntil) {
+                    p.travelled = Math.min(p.total, p.travelled + (PREVIEW_METERS_PER_SECOND * dt) / 1000);
+                    const next = p.stops.find((x) => !x.done && x.at <= p.travelled);
+                    if (next) {
+                        next.done = true;
+                        p.travelled = next.at;
+                        p.holdUntil = now + PREVIEW_STOP_MS;
+                        const s = next.spot;
+                        $("previewText").replaceChildren(el("b", {}, `${s.number}. ${s.street}`), ` · ${s.crashes.n} crashes since 2021. `, el("b", {}, "Watch out: "), s.tip || "");
+                        if (!p.phone) s.marker?.openPopup(); // on a phone the bar already shows the tip
+                    } else if (now >= p.holdUntil && p.holdUntil) {
+                        p.holdUntil = 0;
+                        map.closePopup();
+                        $("previewText").textContent = "Riding on…";
+                    }
+                    const here = pointAt(p.travelled);
+                    p.rider.setLatLng(here);
+                    map.panTo(here, { animate: false });
+                    $("previewFill").style.width = `${(100 * p.travelled) / p.total}%`;
+                    if (p.travelled >= p.total) {
+                        $("previewText").textContent = "You've arrived. That's the whole route.";
+                        $("previewPause").textContent = "Replay";
+                        p.paused = true;
+                        p.ended = true;
+                    }
+                }
+                p.frame = requestAnimationFrame(stepPreview);
+            }
+            function stopPreview(refit = true) {
+                if (!preview) return;
+                cancelAnimationFrame(preview.frame);
+                preview.rider.remove();
+                $("legend").open = preview.legendWasOpen;
+                $("app").classList.remove("previewing");
+                setTimeout(() => map.invalidateSize(), 250);
+                preview = null;
+                map.closePopup();
+                $("previewBar").classList.add("hidden");
+                if (refit) fitRoutes();
+            }
+            $("previewPause").addEventListener("click", () => {
+                if (!preview) return;
+                if (preview.ended) {
+                    const route = distinctRoutes(state.map).find((r) => isRecommended(r));
+                    return previewRide(route);
+                }
+                preview.paused = !preview.paused;
+                $("previewPause").textContent = preview.paused ? "Resume" : "Pause";
+            });
+            $("previewExit").addEventListener("click", () => stopPreview());
+            document.addEventListener("keydown", (e) => e.key === "Escape" && preview && stopPreview());
+
             function orderedPoints(route) {
                 const pts = [];
                 const d = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
@@ -1342,6 +1454,7 @@
 
             // --- Running a question ---
             function reset(keepSession) {
+                stopPreview(false);
                 const prior = state;
                 state = fresh();
                 if (keepSession && prior) Object.assign(state, { session: prior.session, trip: prior.trip, messages: prior.messages, context: prior.context });
