@@ -498,12 +498,18 @@ def route_brief(routes: dict | None) -> str:
 # --- Guardrails that run in code, before any model sees the message ---
 
 MAX_MESSAGE_CHARS = 500
+QUALIFIER = r"(previous|prior|above|earlier|system|original|initial|hidden)"
 INJECTION = re.compile("|".join([
-    r"\b(ignore|disregard|forget|override|bypass)\s+(all\s+|any\s+)?(of\s+)?(your|the|previous|prior|above|earlier|these|those)\s+"
-    r"(previous\s+|prior\s+|system\s+|above\s+)?(instructions?|rules|prompt|guardrails?|guidelines)\b",
-    r"\bsystem\s*prompt\b", r"\b(reveal|print|show|repeat|leak|output)\b.{0,30}\b(your|the)\s+(prompt|instructions|rules)\b",
-    r"\bdeveloper mode\b", r"\bjailbreak", r"\byou are now\b", r"\bpretend (to be|you are)\b",
-    r"\b(call|run|use|invoke)\b.{0,20}\b(tool|function|run_sql)\b", r"\b(drop|delete|truncate|alter)\s+(table|from)\b"]), re.I)
+    # "ignore your instructions", "disregard all previous instructions"; not "ignore the bike lane rules"
+    rf"\b(ignore|disregard|forget|override|bypass)\s+(all\s+|any\s+)?(of\s+)?((your|these|those)\s+({QUALIFIER}\s+)?|((the|my|all)\s+)?{QUALIFIER}\s+)"
+    r"(instructions?|rules|prompts?|guardrails?|guidelines)\b",
+    r"\bsystem\s*prompt\b",
+    # "reveal your instructions", "print the hidden prompt"; not "repeat the instructions for Avoid this stretch"
+    rf"\b(reveal|print|show|repeat|leak|output|dump)\b.{{0,20}}\b(your|the\s+{QUALIFIER}|your\s+{QUALIFIER})\s+(prompt|instructions|rules)\b",
+    r"\bdeveloper mode\b", r"\bjailbreak",
+    r"\byou are now (a|an|my|in|no longer)\b",  # a new role; not "you are now looking at Brooklyn"
+    r"\brun_sql\b", r"\b(call|invoke)\s+(a|any|the|another|other)?\s*(tool|function)s?\b.{0,20}\b(not|outside|other|instead)\b",
+    r"\b(drop|delete|truncate|alter)\s+(table|from)\b"]), re.I)
 SUGGESTIONS = ["From Columbia University to Union Square, around 8am", "Is biking in Queens safe?"]
 
 

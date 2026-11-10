@@ -74,6 +74,20 @@ def main(url: str) -> None:
                         "tools": [], "rerun": reply.get("rerun")})
         rows.append(f"| {kind} | {text} | {expected} | {did[:220]}{'…' if len(did) > 220 else ''} | {'Pass' if ok else 'FAIL'} |")
         print(f"{'pass' if ok else 'FAIL'} | {kind} | {text[:70]}")
+    # False positives: casual on-topic phrasing through the same guard code the deploy runs (no network,
+    # so it doesn't spend the rate limit). The list lives in tests/test_app.py.
+    sys.path.insert(0, str(DOCS.parent))
+    sys.path.insert(0, str(DOCS.parent / "tests"))
+    import app
+    from test_app import CASUAL
+    blocked = [q for q in CASUAL if app.guard(q)]
+    ok = not blocked
+    results.append({"kind": "False positives", "input": CASUAL, "expected": "None blocked", "passed": ok, "blocked": blocked})
+    rows.append(f"| False positives | {len(CASUAL)} casual on-topic questions, such as \"ignore the park, what's fastest?\", "
+                f"\"forget the last route, try from Harlem\", \"pretend I'm on an e-bike\", \"act like it's night\" "
+                f"(full list in `tests/test_app.py`) | None blocked by the guard | {len(blocked)} of {len(CASUAL)} blocked"
+                f"{': ' + '; '.join(blocked) if blocked else ''} | {'Pass' if ok else 'FAIL'} |")
+    print(f"{'pass' if ok else 'FAIL'} | False positives | {len(blocked)} of {len(CASUAL)} blocked")
     lines = ["# Guardrail checks", "", f"Each input was sent to `POST /chat` at {url} by `build/guardrail_checks.py`.", "",
              "| Kind | Input | Expected | What the app did | Result |", "|---|---|---|---|---|", *rows, ""]
     (DOCS / "guardrails.md").write_text("\n".join(lines))
