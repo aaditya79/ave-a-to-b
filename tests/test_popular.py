@@ -75,3 +75,12 @@ def test_ride_here_names_resolve_offline():
     for r in RIDES:
         for place in (r["start"], r["end"]):
             assert app.tools._place(place) or app.tools._intersection(place), place
+
+
+def test_loops_are_closed_and_counterclockwise():
+    loops = [r for r in RIDES if r["kind"] == "loop"]
+    assert {r["name"] for r in loops} == {"Central Park loop", "Prospect Park loop"}
+    for r in loops:
+        line = r["line"][0]
+        assert line[0] == line[-1], r["name"]
+        assert b12_popular.signed_area(line) > 0 and r["direction"] == "counterclockwise", r["name"]

@@ -25,9 +25,15 @@ def test_visitor_limit_is_30_an_hour():
 def test_daily_cap_covers_everyone():
     reset()
     app.over_limit.__globals__["day_count"]["day"] = time.strftime("%Y-%m-%d", time.localtime(time.time() - 5 * 3600))
-    app.day_count["n"] = app.QUESTIONS_PER_DAY // app.MAX_INSTANCES
+    app.day_count["n"] = app.PER_INSTANCE_PER_DAY
     reply = client.post("/chat", json={"message": "hi"}, headers={"x-forwarded-for": "1.2.3.4"})
     assert reply.status_code == 429 and "for today" in reply.json()["response"]
+    # The message points to what still works without the model
+    assert all(w in reply.json()["response"] for w in ["saved examples", "History", "Popular rides"])
+    with client.stream("GET", "/run", params={"message": "I bike from Columbia University to Union Square. Which route should I take?"},
+                       headers={"x-forwarded-for": "5.6.7.8"}) as r:
+        event = json.loads(next(line for line in r.iter_lines() if line.startswith("data: "))[6:])
+    assert event["type"] == "error" and event["limit"] is True
 
 
 def test_old_questions_stop_counting():
@@ -505,7 +511,24 @@ def test_the_cache_skips_conversations_and_expires(monkeypatch, tmp_path):
 
 
 def test_cost_caps():
-    assert app.QUESTIONS_PER_DAY == 100 and app.QUESTIONS_PER_HOUR == 30 and app.MAX_FOLLOWUPS == 10
+    # At most 16 new trips a day: 8 on each of at most 2 instances; 5 follow-ups a trip
+    assert app.PER_INSTANCE_PER_DAY == 8 and app.MAX_INSTANCES == 2 and app.QUESTIONS_PER_DAY == 16
+    assert app.QUESTIONS_PER_HOUR == 30 and app.MAX_FOLLOWUPS == 5
+
+
+def test_low_reasoning_effort_everywhere_but_the_writer():
+    low = lambda agent: agent.model_settings.extra_args.get("reasoning_effort")
+    assert low(app.lead) == low(app.verifier) == low(app.followup_agent) == "low"
+    assert all(low(a) == "low" for a in app.RESEARCHERS.values())
+    assert low(app.writer) == "low"  # unchanged: the Writer already ran at low
+
+
+def test_a_followup_doesnt_count_toward_the_trip_cap(monkeypatch):
+    monkeypatch.setattr(app, "day_count", {"day": None, "n": 0})
+    monkeypatch.setattr(app, "asked", {})
+    request = type("R", (), {"headers": {"x-forwarded-for": "9.9.9.9"}, "client": None})()
+    app.over_limit(request, new=False)
+    assert app.day_count["n"] == 0
 
 
 def test_a_cached_answer_doesnt_count_toward_the_daily_cap(monkeypatch):
@@ -517,3 +540,39 @@ def test_a_cached_answer_doesnt_count_toward_the_daily_cap(monkeypatch):
     assert app.day_count["n"] == 0
     app.over_limit(request)
     assert app.day_count["n"] == 1
+
+
+def test_madison_sq_suggests_madison_square_garden_as_a_landmark(monkeypatch):
+    def down(*args, **kwargs):
+        raise app.tools.httpx.ConnectTimeout("down")
+    monkeypatch.setattr(app.tools.httpx, "get", down)
+    app.tools._suggested.clear()
+    found = client.get("/autocomplete", params={"q": "madison sq"}).json()
+    assert found[0] == {"label": "Madison Square Garden", "detail": "Manhattan", "value": "Madison Square Garden, Manhattan", "landmark": True}
+    williamsburg = client.get("/autocomplete", params={"q": "williamsb"}).json()
+    assert "landmark" not in williamsburg[0] and williamsburg[0]["label"] == "Williamsburg"  # a neighborhood
+
+
+def test_geosearch_venues_get_the_landmark_pill(monkeypatch):
+    class Reply:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"features": [
+                {"properties": {"label": "STRAND BOOK STORE, New York, NY, USA", "borough": "Manhattan", "layer": "venue"}},
+                {"properties": {"label": "828 BROADWAY, New York, NY, USA", "borough": "Manhattan", "layer": "address"}},
+                {"properties": {"label": "10 MADISON SQUARE WEST, New York, NY, USA", "borough": "Manhattan", "layer": "venue"}}]}
+    monkeypatch.setattr(app.tools.httpx, "get", lambda *args, **kwargs: Reply())
+    app.tools._suggested.clear()
+    found = client.get("/autocomplete", params={"q": "strand book"}).json()
+    assert found[0]["landmark"] is True and "landmark" not in found[1]
+    assert found[2]["label"] == "10 Madison Square West" and "landmark" not in found[2]  # a numbered address
+
+
+def test_about_sixty_landmarks_every_one_routable():
+    landmarks = [p for p in app.tools.PLACES if p[0] not in app.tools.NEIGHBORHOODS]
+    assert len(landmarks) >= 60
+    for name in ["Madison Square Garden", "Metropolitan Museum of Art", "MoMA", "Barclays Center", "Yankee Stadium",
+                 "Flushing Meadows Corona Park", "Manhattan Bridge", "Queensboro Bridge", "Chelsea Market"]:
+        assert app.tools.geocode(name)["label"].startswith(name), name

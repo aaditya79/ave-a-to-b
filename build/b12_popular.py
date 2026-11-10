@@ -158,6 +158,13 @@ def osm_route(ways: list[dict], points) -> list[tuple[float, float, bool]] | Non
     return [(*coords[nodes[0]], True)] + [(*coords[v], sep_of[(u, v)]) for u, v in zip(nodes, nodes[1:])]
 
 
+def signed_area(line) -> float:
+    """Shoelace area with x east and y north: positive for a counterclockwise loop."""
+    a = xy(*zip(*line))
+    x, y = a[:, 1], a[:, 0]
+    return float(np.sum(x[:-1] * y[1:] - x[1:] * y[:-1]) / 2)
+
+
 def label(n: int, expected: float) -> str | None:
     """The routes' test: a label only when the whole 95% range sits on one side of the expectation."""
     low, high = tools.range_bounds(n)
@@ -190,6 +197,14 @@ def describe(name, kind, start, end, source, points, osm) -> dict | None:
         print(f"  left out {name}: its OSM path has a gap between the ride's ends")
         return None
     line = [[lat, lon] for lat, lon, _ in steps]
+    if kind == "loop":
+        # Closed, and counterclockwise on the map, the way the Central Park and Prospect Park drives run
+        if line[0] != line[-1]:
+            line.append(list(line[0]))
+            steps.append((*line[0], steps[-1][2]))
+        if signed_area(line) < 0:
+            line.reverse()
+            steps.reverse()
     a = xy(*zip(*line))
     seg = np.hypot(*np.diff(a, axis=0).T)
     meters = float(seg.sum())
@@ -206,7 +221,8 @@ def describe(name, kind, start, end, source, points, osm) -> dict | None:
     on_line = miles
     mostly_streets = sep_m / meters < 0.5
     ride = {
-        "name": name, "kind": kind, "start": start, "end": end,
+        "name": name, "slug": name.lower().split(",")[0].replace(" ", "-"), "kind": kind, "start": start, "end": end,
+        "direction": ("counterclockwise" if signed_area(line) > 0 else "clockwise") if kind == "loop" else None,
         "miles": round(miles, 1), "minutes": round(miles / BIKE_MPH * 60),
         "protected_share": round(sep_m / meters, 2),
         "crashes_beside": n, "range_low": round(low, 1), "range_high": round(high, 1),

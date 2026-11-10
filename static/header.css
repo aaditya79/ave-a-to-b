@@ -18,6 +18,7 @@ html, body { margin: 0; }
 .sign-links a { color: #fff; font-weight: 700; font-size: 16px; line-height: 1; text-decoration: none; padding: 6px 0; border-bottom: 2px solid transparent; white-space: nowrap; text-shadow: 0 1px 2px #111; }
 .sign-links a:hover, .sign-links a:focus-visible { border-bottom-color: rgba(255, 255, 255, 0.6); outline: none; }
 .sign-links a[aria-current="page"] { border-bottom-color: #fff; }
+@media (max-width: 1180px) and (min-width: 961px) { .sign-links { gap: 18px; } .sign-links a { font-size: 15px; } .sign-name { font-size: 21px; } }
 @media (max-width: 960px) {
     .signbar { height: 56px; padding: 0 14px 4px 16px; gap: 10px; }
     .sign-skyline { height: 44px; width: 70%; }

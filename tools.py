@@ -216,7 +216,43 @@ PLACES = [
     ("Bay Ridge 69th Street Pier", "Brooklyn", 40.63720, -74.03580, ["69th street pier"]),
     ("Verrazzano-Narrows Bridge", "Brooklyn", 40.60850, -74.03800, ["verrazzano bridge", "verrazano bridge"]),
     ("Brighton Beach", "Brooklyn", 40.57760, -73.96160, []),
+    # More common landmarks, coordinates checked against NYC GeoSearch
+    ("Madison Square Garden", "Manhattan", 40.75051, -73.99341, ["msg", "madison sq garden"]),
+    ("Metropolitan Museum of Art", "Manhattan", 40.77943, -73.96324, ["the met", "met museum", "metropolitan museum"]),
+    ("MoMA", "Manhattan", 40.76143, -73.97762, ["museum of modern art"]),
+    ("American Museum of Natural History", "Manhattan", 40.78132, -73.97399, ["amnh", "natural history museum", "museum of natural history"]),
+    ("Guggenheim Museum", "Manhattan", 40.78296, -73.95899, ["guggenheim"]),
+    ("Whitney Museum", "Manhattan", 40.73959, -74.00888, ["whitney"]),
+    ("The High Line", "Manhattan", 40.74800, -74.00476, ["high line"]),
+    ("Chelsea Market", "Manhattan", 40.74241, -74.00610, []),
+    ("Little Island", "Manhattan", 40.74210, -74.01020, []),
+    ("Flatiron Building", "Manhattan", 40.74111, -73.98966, ["flatiron"]),
+    ("Chrysler Building", "Manhattan", 40.75162, -73.97554, []),
+    ("Madison Square Park", "Manhattan", 40.74210, -73.98810, []),
+    ("Tompkins Square Park", "Manhattan", 40.72650, -73.98170, []),
+    ("Carnegie Hall", "Manhattan", 40.76510, -73.97990, []),
+    ("Radio City Music Hall", "Manhattan", 40.75998, -73.97997, ["radio city"]),
+    ("Apollo Theater", "Manhattan", 40.81002, -73.95006, ["apollo"]),
+    ("9/11 Memorial", "Manhattan", 40.71150, -74.01330, ["911 memorial", "9 11 memorial", "september 11 memorial"]),
+    ("City College", "Manhattan", 40.81950, -73.94930, ["ccny", "city college of new york"]),
+    ("Manhattan Bridge", "Manhattan", 40.71658, -73.99430, []),
+    ("Williamsburg Bridge", "Manhattan", 40.71770, -73.98580, []),
+    ("Queensboro Bridge", "Manhattan", 40.75990, -73.96340, ["59th street bridge", "ed koch queensboro bridge"]),
+    ("Brooklyn Museum", "Brooklyn", 40.67120, -73.96360, []),
+    ("Brooklyn Botanic Garden", "Brooklyn", 40.66940, -73.96240, []),
+    ("Domino Park", "Brooklyn", 40.71450, -73.96860, []),
+    ("McCarren Park", "Brooklyn", 40.72080, -73.95170, []),
+    ("Brooklyn Navy Yard", "Brooklyn", 40.70000, -73.97400, ["navy yard"]),
+    ("Gantry Plaza State Park", "Queens", 40.74540, -73.95820, ["gantry plaza"]),
+    ("Astoria Park", "Queens", 40.77940, -73.92200, []),
+    ("Flushing Meadows Corona Park", "Queens", 40.74599, -73.84467, ["flushing meadows", "unisphere", "corona park"]),
+    ("USTA Billie Jean King Tennis Center", "Queens", 40.75000, -73.84560, ["us open", "tennis center"]),
+    ("Bronx Zoo", "Bronx", 40.85060, -73.87690, []),
+    ("New York Botanical Garden", "Bronx", 40.86220, -73.88010, ["nybg"]),
+    ("Fordham University", "Bronx", 40.86120, -73.88550, ["fordham"]),
 ]
+# Built-in places that are neighborhoods, not landmarks: no Landmark pill in the suggestions
+NEIGHBORHOODS = {"Harlem", "DUMBO", "Prospect Heights", "Park Slope", "Williamsburg", "Astoria", "Long Island City", "Brighton Beach", "Coney Island"}
 # Places people name that are outside the city's street and crash data: they resolve to "outside NYC".
 OUTSIDE = {"ewr": "Newark Airport", "newark": "Newark", "newark airport": "Newark Airport",
            "newark liberty": "Newark Airport", "newark liberty airport": "Newark Airport",
@@ -269,27 +305,31 @@ def suggest(text: str, limit: int = 5) -> list[dict]:
         return []
     hits = [(not title.lower().startswith(name), title, home) for title, home, *_ , aliases in PLACES
             if name in title.lower() or any(name in a for a in aliases)]
-    out = [{"label": title, "detail": home, "value": f"{title}, {home}", "landmark": True} for _, title, home in sorted(hits)]
+    out = [{"label": title, "detail": home, "value": f"{title}, {home}", **({} if title in NEIGHBORHOODS else {"landmark": True})}
+           for _, title, home in sorted(hits)]
     if len(out) < limit and len(name) >= 3:
         key = text.strip().lower()
         if key not in _suggested:
             try:
                 response = httpx.get("https://geosearch.planninglabs.nyc/v2/autocomplete", params={"text": text}, timeout=2.5)
                 response.raise_for_status()
-                _suggested[key] = [(_tidy(f["properties"].get("label", "")), f["properties"].get("borough") or "")
+                # GeoSearch's layer "venue" is a named place (a museum, a stadium, a park) and gets the Landmark pill too.
+                # It also tags some numbered addresses as venues ("10 Madison Square West"): those stay addresses.
+                _suggested[key] = [(_tidy(f["properties"].get("label", "")), f["properties"].get("borough") or "",
+                                    f["properties"].get("layer") == "venue" and not re.match(r"\d", f["properties"].get("label", "")))
                                    for f in response.json().get("features", []) if f["properties"].get("label")]
                 if len(_suggested) > 2000:
                     _suggested.pop(next(iter(_suggested)))
             except (httpx.HTTPError, ValueError):
                 return out[:limit]
         seen = {o["value"].lower() for o in out}
-        for label, borough in _suggested[key]:
+        for label, borough, venue in _suggested[key]:
             street = label.split(", ")[0]
             borough = borough or label.partition(", ")[2]  # GeoSearch labels Manhattan "New York", so prefer its borough field
             value = f"{street}, {borough}" if borough else street
             if value.lower() not in seen:
                 seen.add(value.lower())
-                out.append({"label": street, "detail": borough, "value": value})
+                out.append({"label": street, "detail": borough, "value": value, **({"landmark": True} if venue else {})})
     return out[:limit]
 
 
