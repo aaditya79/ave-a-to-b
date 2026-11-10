@@ -274,14 +274,20 @@ lead = Agent(
     instructions=f"""\
 You lead a team that compares bike commute routes in New York City for safety.
 
-1. Check the question. The input may also hold the conversation so far and trip details the rider filled in
-   on the form. A start, an end, or a time from any of them counts: never ask again for something already given.
-   - Both a start and an end are known: go to step 2.
-   - The question is about an area with no trip ("Is biking in Queens safe?"): call area_summary once with
-     the borough (for a neighborhood, its borough; for the whole city, "New York City"). The page shows
-     those numbers. Never call one borough "safer" or "less safe" than another: crashes per mile also
-     reflect how many people ride, and rider counts outside Manhattan are thin. Then reply with the two lines below, offering to compare a specific route.
-   - Otherwise, reply with the two lines below, asking only for what is missing.
+1. Classify the rider's latest message first. The message decides the task, not the form:
+   - FOLLOW-UP: it answers your earlier clarifying question (a place, a time, a tapped example trip). Continue
+     that task with what it adds.
+   - AREA question: about a borough, neighborhood, or the city with no trip, such as "Is biking in Queens safe?",
+     even if the form holds a trip. Call area_summary once with the borough (for a neighborhood, its borough;
+     for the whole city, "New York City"). The page shows those numbers, and offers the form's trip if there is
+     one. Never call one borough "safer" or "less safe" than another: crashes per mile also reflect how many
+     people ride, and rider counts outside Manhattan are thin. Then reply with the two lines below.
+   - ROUTE question: about getting from one place to another. Use the form's From and To only when the message
+     is about that trip or names no other place ("Which way is safer in the morning?"). If the message names
+     its own places, those win. A start, an end, or a time from the message, the conversation, or the form
+     counts: never ask again for something already given.
+   Both a start and an end known: go to step 2. Otherwise reply with the two lines below, asking only for
+   what is missing.
    The two lines:
    CLARIFY: <one short question asking only for what's missing: the start, the end, or both, and the time
    of day they ride if it isn't known>
@@ -446,7 +452,7 @@ def parse_clarify(text: str) -> dict:
     return {"response": question, "clarify": True, "options": options, "answer": None, "map": None}
 
 
-async def answer(question: str, hooks: TraceHooks) -> dict:
+async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -> dict:
     run = Research(hooks=hooks)
     started = time.monotonic()
 
@@ -462,7 +468,14 @@ async def answer(question: str, hooks: TraceHooks) -> dict:
         calls = [c for c in hooks.tool_calls if c["name"] == "area_summary" and isinstance(c["args"], dict)]
         area = next((r for r in (tools.area_summary(**c["args"]) for c in reversed(calls)) if "error" not in r), None)
         if area:  # an area question: answer it from our data, then offer a route
-            asked.update(area=area, response=f"{tools.area_text(area)}\n\nI can also compare routes for a specific trip. {asked['response']}")
+            if trip and trip.start and trip.end:
+                # The form already holds a trip: offer it, first among the quick replies
+                offer = f"I can also compare routes for your trip from {trip.start} to {trip.end}."
+                mine = f"From {trip.start} to {trip.end}" + (f", {trip.when}" if trip.when else "")
+                asked["options"] = [mine, *[o for o in asked["options"] if o != mine]][:3]
+                asked.update(area=area, response=f"{tools.area_text(area)}\n\n{offer}")
+            else:
+                asked.update(area=area, response=f"{tools.area_text(area)}\n\nI can also compare routes for a specific trip. {asked['response']}")
         return asked
     if run.routes is None:
         # No route: the tool's note (or the Lead's reply) is all there is to explain
@@ -747,7 +760,8 @@ def lead_input(message: str, history: list[dict], trip: Trip | None) -> str:
     filled = {k: v.strip() for k, v in (trip.model_dump() if trip else {}).items() if v and v.strip()}
     if filled:
         names = {"start": "From", "end": "To", "when": "When"}
-        parts.append("Trip details the rider filled in on the form (use them, don't ask for them again): "
+        parts.append("Trip details the rider filled in on the form. Use them only if the latest message is about this "
+                     "trip or names no other place, and don't ask for them again: "
                      + "; ".join(f"{names[k]}: {v}" for k, v in filled.items()))
     if not parts:
         return message
@@ -777,7 +791,7 @@ async def chat(request: ChatRequest, http: Request):
     hooks = TraceHooks(sessions[session_id], lambda event: None)
     history = remember(session_id, request.messages, request.message, "")
     try:
-        result = await answer(lead_input(request.message, history, request.context), hooks)
+        result = await answer(lead_input(request.message, history, request.context), hooks, request.context)
         remember(session_id, history, request.message, result["response"])
     except Exception as e:
         # Auth, quota, a model that won't stop: say so as the reply, like any other answer
@@ -808,7 +822,7 @@ async def run(message: str, http: Request, session_id: str | None = None, messag
 
     async def work():
         try:
-            result = await answer(lead_input(message, history, trip), hooks)
+            result = await answer(lead_input(message, history, trip), hooks, trip)
             remember(session_id, history, message, result["response"])
             queue.put_nowait({"type": "done", **result})
         except Exception as e:

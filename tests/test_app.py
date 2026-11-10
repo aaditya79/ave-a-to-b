@@ -107,7 +107,7 @@ def test_question_uses_the_filled_from_and_to(monkeypatch):
                                         "context": {"start": "Columbia University", "end": "Union Square"}}).json()
     assert "From: Columbia University" in lead.inputs[0] and "To: Union Square" in lead.inputs[0]
     assert "don't ask for them again" in lead.inputs[0]
-    assert "both a start and an end are known" in app.lead.instructions.lower()
+    assert "both a start and an end known" in app.lead.instructions.lower()
     assert "never ask again for something already given" in app.lead.instructions
     assert reply["clarify"] and reply["session_id"]
 
@@ -135,3 +135,23 @@ def test_area_question_answers_then_offers_a_route(monkeypatch):
     assert reply["response"].startswith("Biking in Queens: 0.36 crashes that hurt a cyclist per mile")
     assert reply["response"].endswith("Where do you start and end, and when?")
     assert [c["name"] for c in reply["tool_calls"]] == ["area_summary"]
+
+
+def test_morning_question_with_the_form_filled_uses_the_fields(monkeypatch):
+    lead = ScriptedLead(monkeypatch, "DONE")
+    client.post("/chat", json={"message": "Which way is safer in the morning?",
+                               "context": {"start": "Columbia University", "end": "Union Square"}})
+    assert "From: Columbia University; To: Union Square" in lead.inputs[0]
+    assert lead.inputs[0].endswith("Their latest message: Which way is safer in the morning?")
+    assert '"Which way is safer in the morning?"' in app.lead.instructions  # the rule that uses the form
+
+
+def test_area_question_with_an_unrelated_trip_filled_answers_the_area(monkeypatch):
+    ScriptedLead(monkeypatch, "CLARIFY: Want routes for a Brooklyn trip?\nOPTIONS: From Park Slope to DUMBO, around 8am", area="Brooklyn")
+    reply = client.post("/chat", json={"message": "Is biking in Brooklyn safe?",
+                                        "context": {"start": "Columbia University", "end": "Union Square", "when": "around 8am"}}).json()
+    assert reply["clarify"] and reply["map"] is None and reply["area"]["area"] == "Brooklyn"
+    assert reply["response"].startswith("Biking in Brooklyn: 1.09 crashes")
+    assert reply["response"].endswith("I can also compare routes for your trip from Columbia University to Union Square.")
+    assert reply["options"][0] == "From Columbia University to Union Square, around 8am"
+    assert "message decides the task, not the form" in app.lead.instructions
