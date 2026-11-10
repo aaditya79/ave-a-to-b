@@ -237,7 +237,7 @@ async def send_researcher(run: Research, researcher: str, task: str, refs: list[
         if 1 < run.rounds <= MAX_ROUNDS:
             reason = gap.strip().rstrip(".")
             first = reason.split()[0] if reason else ""
-            if first[:1].isupper() and not (len(first) > 1 and first.isupper()):  # "We need ..." -> "because we need ..."; keeps SIP
+            if first in SENTENCE_OPENERS:  # "We need ..." -> "because we need ..."; keeps "Round 1", "Broadway", "SIP"
                 reason = reason[0].lower() + reason[1:]
             run.hooks.handoff("Lead", "Lead", "gap", f"Sent Round {run.rounds} because {reason or 'of a gap: ' + task}.", round=run.rounds)
     if run.rounds > MAX_ROUNDS:
@@ -272,6 +272,8 @@ async def send_researcher(run: Research, researcher: str, task: str, refs: list[
     return text
 
 
+SENTENCE_OPENERS = {"We", "The", "A", "An", "There", "It", "Its", "This", "That", "These", "Those", "Their", "Our", "No", "Both",
+                    "One", "Two", "Three", "Some", "Several", "Each", "None", "Most", "Many", "Only", "Neither"}
 LABEL_OF = {"crash": "crash counts", "infrastructure": "bike lanes and redesigns", "exposure": "rider estimates"}
 
 

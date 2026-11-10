@@ -177,6 +177,10 @@ def test_researchers_log_brief_findings_and_the_gap_decision(monkeypatch):
     assert hooks.handoffs[1]["text"].startswith("Crash Researcher 1 found 3 crashes")
     assert hooks.handoffs[2]["text"] == "Sent Round 2 because a lane went in during the window."
     assert all(isinstance(h["at_seconds"], float) for h in hooks.handoffs)
+    run2 = app.Research(hooks=hooks)
+    asyncio.run(app.send_researcher(run2, "crash", "x", ["route:abc"]))
+    asyncio.run(app.send_researcher(run2, "crash", "y", ["route:abc"], gap="Round 1 skipped West 114th Street."))
+    assert hooks.handoffs[-3]["text"] == "Sent Round 2 because Round 1 skipped West 114th Street."
 
 
 def test_chat_returns_the_handoffs(monkeypatch):
