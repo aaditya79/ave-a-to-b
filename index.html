@@ -136,6 +136,9 @@
             .field { display: grid; gap: 6px; margin-bottom: 12px; position: relative; }
             .field > label { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
             .input, select.input { width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; min-width: 0; font-size: 16px; }
+            select, select.input { appearance: none; -webkit-appearance: none; padding-right: 44px; cursor: pointer;
+                background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%230b1f3a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 16px center / 12px 8px; }
+            select::-ms-expand { display: none; }
             .input:focus { outline: 3px solid var(--blue-soft); border-color: var(--blue); }
             .row { display: flex; gap: 12px; align-items: end; }
             .row > * { flex: 1; min-width: 0; }
@@ -180,7 +183,9 @@
             .timer { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--muted); }
             @keyframes pulse { 50% { transform: scale(1.6); opacity: 0.5; } }
             .agents { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
-            .agents .round { font-size: 12px; color: var(--faint); font-weight: 600; margin: 0 2px 0 8px; }
+            .round-box { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 8px 8px; border: 1px solid var(--line); border-radius: 10px; background: #f8f9fb; max-width: 100%; }
+            .round-title { flex-basis: 100%; display: flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+            .round-box[data-round="2"], .round-box[data-round="3"] { border-style: dashed; border-color: #b9c1cb; }
             .agent-chip::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--agent, var(--faint)); margin-right: 6px; vertical-align: 1px; }
             .agent-chip.done::before, .agent-chip.failed::before { background: #fff; }
             .agent-chip { font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); background: #fff; color: var(--faint); cursor: pointer; }
@@ -223,7 +228,10 @@
             .stat .value { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
             .stat .label { font-size: 13px; color: var(--muted); }
             .sure { font-size: 14px; color: var(--muted); margin-top: 8px; }
-            .lanes { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin-top: 12px; background: #eceff3; }
+            .lane-head { display: flex; align-items: center; gap: 4px; margin-top: 12px; font-size: 13px; font-weight: 600; color: var(--muted); }
+            .lanes { display: flex; height: 10px; border-radius: 5px; overflow: hidden; margin-top: 6px; background: #eceff3; }
+            .lane-key span[role="button"] { cursor: help; }
+            .tip { white-space: pre-line; }
             .lanes span { height: 100%; }
             .lane-key { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--muted); margin-top: 6px; }
             .lane-key i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
@@ -566,6 +574,8 @@
             const LANE_NAMES = { protected: "Protected", path: "Path", link: "Link", painted: "Painted", shared: "Shared", none: "No lane" };
             const LABEL = { fastest: "Fastest", balanced: "Balanced", lowest_risk: "Lowest risk" };
             const INFO = {
+                lanes: "Protected: separated from cars by a curb, parked cars, or posts, or an off-street path like a greenway.\nPainted: a bike lane marked with paint only, next to moving traffic.\nShared: bike symbols painted in a lane you share with cars.\nNo lane: no bike markings; you ride in regular traffic.",
+                gap: "The Lead sent more research to fill a gap in Round 1.",
                 timing: "Police-reported crashes that hurt a cyclist on this route's streets since 2021. A busy hour has more riders as well as more crashes, so these show when crashes happen, not your odds at that hour. The latest year is partial, shown as a hollow dot and scaled to a full year for the trend.",
                 risk: "Expected police-reported bike crashes for each mile ridden on this route, compared with the fastest route. \"62% lower\" means about 0.38 times the fastest route's risk. It compares routes. It is not your personal odds.",
                 range: "Nobody counts riders on most streets, so we estimate how many use streets without bike lanes. We redo the math at half and at double that estimate. The range shows the lowest and highest result.",
@@ -919,17 +929,31 @@
                 }, 500);
             }
             const KIND_LABEL = { crash: "Crash", infrastructure: "Infrastructure", exposure: "Exposure" };
+            // Researchers sit in a labeled box per round; Lead, Writer, and Verifier stay outside the boxes
+            const gapReason = (text) => text.replace(/^Sent Round \d+ because/, "Sent back because");
+            function roundBox(round) {
+                let box = $("agents").querySelector(`.round-box[data-round="${round}"]`);
+                if (box) return box;
+                const reason = state.gapReasons?.[round];
+                const title = el("div", { class: "round-title" }, round === 1 ? "Round 1" : `Round ${round} · gap check`);
+                if (round > 1) {
+                    const why = el("button", { class: "info", type: "button", "aria-label": "Why the Lead sent this round",
+                        onclick: (e) => { e.stopPropagation(); showTip(why, state.gapReasons?.[round] || INFO.gap); } }, "i");
+                    if (reason) why.title = reason;
+                    title.append(why);
+                }
+                box = el("div", { class: "round-box", "data-round": round }, title);
+                const writer = $("agents").querySelector('[data-group="Writer"]');
+                writer ? $("agents").insertBefore(box, writer) : $("agents").append(box);
+                return box;
+            }
             function group(key, label, round = 1) {
                 if (state.groups[key]) return state.groups[key];
-                if (round > 1 && !$("agents").querySelector(`[data-round="${round}"]`)) {
-                    const mark = el("span", { class: "round", "data-round": round }, `Round ${round}`);
-                    const writer = $("agents").querySelector('[data-group="Writer"]');
-                    writer ? $("agents").insertBefore(mark, writer) : $("agents").append(mark);
-                }
                 const node = el("button", { class: "agent-chip", style: `--agent:${agentColor(key)}`, onclick: () => showInTimeline(key) }, label);
                 node.dataset.group = key;
                 const writer = $("agents").querySelector('[data-group="Writer"]');
-                if (writer && !["Writer", "Verifier"].includes(key)) $("agents").insertBefore(node, writer);
+                if (key.includes(":")) roundBox(round).append(node); // a researcher, keyed "kind:round"
+                else if (writer && !["Writer", "Verifier"].includes(key)) $("agents").insertBefore(node, writer);
                 else $("agents").append(node);
                 state.groups[key] = { node, label, members: [] };
                 return state.groups[key];
@@ -1037,6 +1061,11 @@
                     (s?.node || $("trace")).append(el("div", { class: "tl-head", style: "margin-top:10px" }, who("Lead"), el("span", { class: "arrow" }, "→"), who(h.to),
                         el("span", { class: "small" }, "retry"), when), el("div", { class: "tl-text" }, h.text.split("\n")[0]));
                 } else if (h.kind === "gap") {
+                    if (h.round) {
+                        state.gapReasons = { ...(state.gapReasons || {}), [h.round]: gapReason(h.text) };
+                        const why = $("agents").querySelector(`.round-box[data-round="${h.round}"] .info`);
+                        if (why) why.title = gapReason(h.text);
+                    }
                     step(agentColor("Lead"), [who("Lead"), el("span", { class: "small" }, "gap decision"), when], el("div", { class: "tl-text" }, h.text));
                 } else if (h.kind === "draft") {
                     const calls = el("ul", { class: "tl-calls" });
@@ -1151,12 +1180,28 @@
                         el("div", {}, el("div", { class: "tl-label" }, `By year (*${t.by_year[t.by_year.length - 1].year} so far, scaled to a full year)`), yearSpark(t), el("p", { class: "small" }, t.year_note))));
             }
             const stat = (value, label) => el("div", { class: "stat" }, el("div", { class: "value" }, value), el("div", { class: "label" }, label));
+            const LANE_DEFS = {
+                protected: "Protected: separated from cars by a curb, parked cars, or posts, or an off-street path like a greenway.",
+                path: "Path: an off-street path, like a greenway, away from cars.",
+                link: "Link: a short connector between bike lanes or paths.",
+                painted: "Painted: a bike lane marked with paint only, next to moving traffic.",
+                shared: "Shared: bike symbols painted in a lane you share with cars.",
+                none: "No lane: no bike markings; you ride in regular traffic.",
+            };
+            function laneTip(node, key) {
+                node.addEventListener("click", (e) => { e.stopPropagation(); showTip(node, LANE_DEFS[key]); });
+                node.addEventListener("pointerenter", (e) => e.pointerType === "mouse" && openTip?.button !== node && showTip(node, LANE_DEFS[key]));
+                node.addEventListener("pointerleave", (e) => e.pointerType === "mouse" && openTip?.button === node && closeTip());
+                return node;
+            }
             function laneBar(r) {
                 const total = Object.values(r.miles_by_lane).reduce((a, b) => a + b, 0) || 1;
                 const keys = ["protected", "path", "link", "painted", "shared", "none"].filter((k) => r.miles_by_lane[k]);
+                const head = el("div", { class: "lane-head" }, "Bike lanes on this route", info("lanes"));
                 return [
+                    head,
                     el("div", { class: "lanes", title: "Miles by lane type" }, keys.map((k) => el("span", { style: `width:${(100 * r.miles_by_lane[k]) / total}%;background:${LANE_COLORS[k]}` }))),
-                    el("div", { class: "lane-key" }, keys.map((k) => el("span", {}, el("i", { style: `background:${LANE_COLORS[k]}` }), `${LANE_NAMES[k]} ${r.miles_by_lane[k].toFixed(1)} mi`))),
+                    el("div", { class: "lane-key" }, keys.map((k) => laneTip(el("span", { tabindex: 0, role: "button", "aria-label": LANE_DEFS[k] }, el("i", { style: `background:${LANE_COLORS[k]}` }), `${LANE_NAMES[k]} ${r.miles_by_lane[k].toFixed(1)} mi`), k))),
                 ];
             }
 
@@ -1914,7 +1959,7 @@
                 setChip("Lead", "running");
                 source = { close() {} }; // onDone closes the stream; a replay has none
                 for (const e of ex.events) onEvent(e);
-                $("timer").textContent = `saved, ${Math.floor(ex.seconds / 60)}:${String(Math.round(ex.seconds % 60)).padStart(2, "0")}`;
+                $("timer").textContent = `${Math.floor(ex.seconds / 60)}:${String(Math.round(ex.seconds % 60)).padStart(2, "0")} when it ran`;
                 $("savedBanner").scrollIntoView({ behavior: "smooth", block: "start" });
             }
             async function runExample(button) {
