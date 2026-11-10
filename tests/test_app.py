@@ -398,3 +398,16 @@ def test_every_saved_example_is_a_full_dated_answer():
         done = ex["events"][-1]
         assert done["type"] == "done" and done["map"]["routes"] and done["answer"]["summary"]
         assert not any(e["type"] == "start" for e in ex["events"])  # no stale session id
+
+
+def test_similar_counts_cover_the_route_classes():
+    edge = "42430394-4347534767-0"  # Central Park South, a none|collector|Manhattan segment
+    routes = {"routes": {"fastest": {"route_ref": app.tools.remember("route", [edge])}}}
+    counts = app.similar_counts(routes)
+    assert counts["classes"] == 1
+    assert counts["similar_segments"] == int((app.tools.edges.risk_class == "none|collector|Manhattan").sum()) - 1
+
+
+def test_numbers_in_a_draft_are_counted_without_citations():
+    draft = "Take the Balanced route: 1.7 minutes longer, about 61% lower risk. [route:abc; edge 42430394-4347534767-0] 10 crashes."
+    assert app.NUMBER.findall(app.CITED.sub("", draft)) == ["1.7", "61%", "10"]

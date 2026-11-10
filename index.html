@@ -107,6 +107,24 @@
             .app.saved #summary, .app.saved .card.route, .app.saved #traceCard { outline: 2px dashed #e0b84d; outline-offset: -2px; }
             @media (max-width: 960px) { .saved-map-tag { top: auto; bottom: 28px; } }
 
+            /* --- Loading moment --- */
+            .loader { display: flex; align-items: center; gap: 10px; margin: 2px 0 12px; }
+            .loader .track { position: relative; flex: 1; height: 26px; border-bottom: 3px dashed var(--line); }
+            .loader .bike { position: absolute; bottom: 1px; left: 0; animation: ride 3.2s ease-in-out infinite; }
+            @keyframes ride { 0% { left: 0; } 100% { left: calc(100% - 34px); } }
+            #progress.finished .loader .bike { animation: none; left: calc(100% - 34px); }
+            #progress.finished .loader .track { border-bottom-style: solid; border-bottom-color: var(--blue); }
+            @media (prefers-reduced-motion: reduce) { .loader .bike { animation-duration: 12s; } }
+            ul.status { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; font-size: 15px; }
+            ul.status li { display: flex; gap: 10px; align-items: baseline; color: var(--faint); }
+            ul.status li::before { content: ""; flex: none; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--line); transform: translateY(1px); }
+            ul.status li.active { color: var(--navy); font-weight: 500; }
+            ul.status li.active::before { border-color: var(--orange); border-top-color: transparent; animation: spin 0.9s linear infinite; }
+            ul.status li.done { color: var(--navy); }
+            ul.status li.done::before { background: var(--low); border-color: var(--low); }
+            ul.status li.skipped { display: none; }
+            @keyframes spin { to { transform: translateY(1px) rotate(360deg); } }
+
             /* --- How it works --- */
             #how h2 { font-size: 16px; margin-bottom: 12px; }
             ol.how { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
@@ -415,13 +433,24 @@
                 </section>
 
                 <section class="card hidden" id="progress">
-                    <div class="steps">
+                    <div class="loader" aria-hidden="true">
+                        <span class="bullet a">A</span>
+                        <div class="track"><svg class="bike" width="34" height="22" viewBox="0 0 34 22" fill="none" stroke="#0b1f3a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="15" r="5.5" /><circle cx="27" cy="15" r="5.5" /><path d="M7 15l6-9h9l5 9M13 6l5 9h-11M20 3h4M22 6l-4 9" /></svg></div>
+                        <span class="bullet b">B</span>
+                    </div>
+                    <ul class="status" id="statusLines" aria-live="polite">
+                        <li data-line="routes">Finding three routes</li>
+                        <li data-line="research">Researchers checking crashes, lanes, and riders</li>
+                        <li data-line="write">Writing the answer</li>
+                        <li data-line="check">Checking every number against a fresh run of the tools</li>
+                    </ul>
+                    <div class="steps hidden">
                         <span class="step" data-step="plan"><span class="dot"></span>Plan</span><span class="arrow">→</span>
                         <span class="step" data-step="research"><span class="dot"></span>Research</span><span class="arrow">→</span>
                         <span class="step" data-step="write"><span class="dot"></span>Write</span><span class="arrow">→</span>
                         <span class="step" data-step="check"><span class="dot"></span>Check</span>
-                        <span class="timer" id="timer">0:00</span>
                     </div>
+                    <div class="small" style="margin: 6px 0 2px">Agents at work <span class="timer" id="timer">0:00</span></div>
                     <div class="agents" id="agents"></div>
                 </section>
 
@@ -1513,6 +1542,8 @@
                 $("progress").classList.remove("hidden");
                 $("traceCard").classList.remove("hidden");
                 $("timer").textContent = "0:00";
+                resetStatus();
+                statusLine("routes", "active");
                 state.saved = null;
                 $("savedBanner").classList.add("hidden");
                 $("savedMapTag").classList.add("hidden");
@@ -1577,22 +1608,61 @@
                     }
                 } else if (e.type === "activity") onActivity(e);
                 else if (e.type === "tool") addCall(e);
+                else if (e.type === "progress") onProgress(e);
                 else if (e.type === "handoff") onHandoff(e);
                 else if (e.type === "done") onDone(e);
                 else if (e.type === "error") fail(e.message);
+            }
+            // --- The loading moment: one line per step, with the counts from this run once each step finishes ---
+            const fmt = (n) => Number(n).toLocaleString("en-US");
+            function statusLine(name, cls, text) {
+                const li = document.querySelector(`#statusLines li[data-line="${name}"]`);
+                if (!li) return;
+                const order = ["routes", "research", "write", "check"];
+                // Starting a step finishes the ones before it
+                if (cls === "active") for (const earlier of order.slice(0, order.indexOf(name))) {
+                    const x = document.querySelector(`#statusLines li[data-line="${earlier}"]`);
+                    if (!x.classList.contains("done")) x.className = "done";
+                }
+                li.className = cls;
+                if (text) li.textContent = text;
+            }
+            function resetStatus() {
+                const start = { routes: "Finding three routes", research: "Researchers checking crashes, lanes, and riders",
+                    write: "Writing the answer", check: "Checking every number against a fresh run of the tools" };
+                for (const li of document.querySelectorAll("#statusLines li")) { li.className = ""; li.textContent = start[li.dataset.line]; }
+                $("progress").classList.remove("finished");
+            }
+            function onProgress(e) {
+                if (e.step === "routes") {
+                    statusLine("routes", "done", `Found ${e.routes} route${e.routes === 1 ? "" : "s"}: ${fmt(e.segments)} street segments checked`);
+                    statusLine("research", "active");
+                } else if (e.step === "research") {
+                    statusLine("research", "done", `Compared with ${fmt(e.similar_segments)} similar street segments (${e.classes} kinds of street); ${e.researchers} researchers made ${fmt(e.tool_calls)} tool calls`);
+                    statusLine("write", "active");
+                } else if (e.step === "check") {
+                    statusLine("check", "done", e.ok ? `Verified ${fmt(e.numbers)} numbers in the answer against ${e.reruns} fresh tool runs`
+                        : `Checked ${fmt(e.numbers)} numbers against ${e.reruns} fresh tool runs; ${e.problems} sent back to the Writer to fix`);
+                }
             }
             function onActivity(e) {
                 if (e.agent === "Writer" && e.text === "started") {
                     setChip("Lead", "done");
                     setStep("write");
+                    statusLine("write", "active");
                     join("Writer", "Writer", "Writer", 1);
                     setChip("Writer", "running");
                 } else if (e.agent === "Verifier" && e.text === "started") {
                     setChip("Writer", "done");
                     setStep("check");
+                    statusLine("write", "done", "Answer written");
+                    statusLine("check", "active");
                     join("Verifier", "Verifier", "Verifier", 1);
                     setChip("Verifier", "running");
-                } else if (e.agent === "Verifier" && e.text.startsWith("could not finish")) setChip("Verifier", "failed");
+                } else if (e.agent === "Verifier" && e.text.startsWith("could not finish")) {
+                    setChip("Verifier", "failed");
+                    statusLine("check", "done", "The number check didn't finish in time; the answer says so");
+                }
                 else if (e.agent === "Lead" && e.text.startsWith("finished")) setChip("Lead", "done");
             }
 
@@ -1601,6 +1671,9 @@
                 busy(false);
                 clearInterval(timer);
                 setStep("done");
+                $("progress").classList.add("finished");
+                // A clarifying question or a declined message skips the route steps
+                for (const li of document.querySelectorAll("#statusLines li")) if (!li.classList.contains("done")) li.className = e.map ? "done" : "skipped";
                 for (const name of ["Lead", "Writer", "Verifier"]) if (state.agents[name] && state.agents[name].status !== "failed") setChip(name, "done");
                 if (state.agents.Lead) state.agents.Lead.text = e.clarify ? `Asked: ${e.response}` : "Found the routes, sent the researchers, and checked for gaps.";
                 if (e.declined) return showClarify(e.response, e.options || []);

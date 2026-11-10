@@ -104,6 +104,9 @@ def route_options(ctx: RunContextWrapper[Research], start: str, end: str) -> str
     if "routes" in result:
         ctx.context.routes = result
         ctx.context.hooks.emit({"type": "routes", "data": map_routes(result)})  # draw the map before research ends
+        every = {e for ids in route_edges(result).values() for e in ids}
+        ctx.context.hooks.emit({"type": "progress", "step": "routes", "segments": len(every),
+                                "routes": len({r["route_ref"] for r in result["routes"].values()})})
     return as_text(for_the_model(result))
 
 
@@ -606,6 +609,8 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
 
     # 2. The exact parts come from code: standout stretches and per-project before/after, across all routes
     facts = page_facts(run, hooks)
+    hooks.emit({"type": "progress", "step": "research", **similar_counts(run.routes), "researchers": run.researchers,
+                "tool_calls": len(hooks.tool_calls)})
 
     # 3. Write: one call. The Writer sees only the question, the routes, the facts, and the findings.
     findings = "\n\n---\n\n".join(f"{f['agent']} (task: {f['task']}; refs: {', '.join(f['refs'])})\n{f['text']}" for f in run.findings)
@@ -634,6 +639,10 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
     except Exception as e:  # out of time or a bad reply: say the check didn't finish, don't block the answer
         hooks.activity("Verifier", f"could not finish: {type(e).__name__}")
     late = time.monotonic() - started > FIX_DEADLINE_SECONDS
+    if check is not None:
+        hooks.emit({"type": "progress", "step": "check", "numbers": len(NUMBER.findall(CITED.sub("", draft))),
+                    "reruns": sum(c["agent"] == "Verifier" for c in hooks.tool_calls), "ok": bool(check.ok or not check.problems),
+                    "problems": len(check.problems or [])})
     unverified = None
     if check is None:
         hooks.handoff("Verifier", "Rider", "unchecked", "The check did not finish in time, so the answer went out unchecked.")
@@ -664,6 +673,17 @@ LABELS = {"fastest": "Fastest", "balanced": "Balanced", "lowest_risk": "Lowest r
 
 def route_edges(routes: dict) -> dict[str, list[str]]:
     return {name: tools.resolve(r["route_ref"]) for name, r in routes["routes"].items()}
+
+
+NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
+
+
+def similar_counts(routes: dict) -> dict:
+    """How many other street segments the route's segments were compared with: every segment in the same
+    similar-street classes (same lane type, road type, and borough), which set each segment's expected crashes."""
+    every = list({e for ids in route_edges(routes).values() for e in ids})
+    classes = tools.edges.loc[every, "risk_class"].unique()
+    return {"similar_segments": int(tools.edges.risk_class.isin(classes).sum() - len(every)), "classes": int(len(classes))}
 
 
 def page_facts(run: Research, hooks: TraceHooks) -> dict:
