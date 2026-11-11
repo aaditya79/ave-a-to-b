@@ -148,9 +148,9 @@ These parts of the results page call code, with at most one small model call:
 - **Ride totals.** The recommended route card, the loops, and History show miles and a rough calorie estimate: kcal = MET × weight in kg × hours riding, with MET about 4 under 10 mph, 6.8 from 10 to 12 mph, and 8 above, taken from the route's average speed. Route times assume 9.5 mph, so most rides use 4. An optional weight field defaults to 70 kg, stays in the browser, and is labeled a rough estimate, since hills, wind, and stops change it. A small kg / lb switch sits next to the weight box. US browsers (en-US) start in pounds, others in kilograms, and the choice is kept in the browser. Switching converts the number in the box (1 kg = 2.2046 lb, rounded to a whole number) and leaves the calories unchanged, because the weight is stored and used in kg.
 - **Link previews.** Open Graph and Twitter tags point to a 1200 × 630 image with the logo, "Which way should I bike?", and a small map of the three routes from the Prospect Heights to DUMBO example. The favicon is the A and B bullets.
 
-Each route type keeps one color everywhere: blue for Fastest, pink for Balanced, and dark slate for Lowest risk. The recommended route gets a badge and a thicker line. Clicking a card under New lanes and redesigns zooms the map to that project's street segments and highlights them.
+Each route type keeps one color everywhere: blue for Fastest, pink for Balanced, and dark slate for Lowest risk. The recommended route gets a badge and a thicker line, and a route the rider selects is drawn on top, thicker, with the recommended route thinner underneath. Clicking a card under New lanes and redesigns zooms the map to that project's street segments and highlights them.
 
-- **Map markers.** Numbered markers for the stretches to watch sit on their route. Where markers would overlap, each moves at most about 12 px off its point, with a thin leader line back to it, and a stretch that is not on one of the three drawn routes is not shown. The recommended route is drawn last and thickest, with a dark outline, so the selected route's risk coloring never hides it. Where routes share a street they are drawn side by side, 5 px apart, with the recommended route on the street itself.
+- **Map markers.** Numbered markers for the stretches to watch sit on their route. Where markers would overlap, each moves at most about 12 px off its point, with a thin leader line back to it; a marker under the A or B pin moves up to 34 px clear of the pin, with the same leader line. A stretch that is not on one of the three drawn routes is not shown. The route on top (the selected one, or the recommended one when none is selected) is drawn last and thickest, with a dark outline. Route labels keep at least 8 px apart and clear of the boxes over the map, and a label with no clear spot is hidden, since the Map key still names that route. The Map key starts folded on phone-width screens. Where routes share a street they are drawn side by side, 5 px apart, with the recommended route on the street itself.
 
 ### Sessions
 
@@ -237,7 +237,7 @@ All tools are plain Python functions in `tools.py` over the Parquet files, retur
 
 `where` is a route ref like `route:efad97ec`, a corridor ref, or segment IDs. Refs are hashes of their segments, so a re-run gives the same answer.
 
-Geocoding accepts "lat,lon" as is. A list of 23 common places (Columbia University, Union Square, Times Square, DUMBO, Prospect Park, Barclays Center, NYU, Grand Central, and others) answers next, with or without a borough: "Union Square, Manhattan" and "Prospect Park, Brooklyn" work on the first try with no network call, and the page's suggestions offer the same list. Otherwise it tries an intersection in the street network ("116th St and Broadway"). A street address then goes to NYC Planning's GeoSearch, then OpenStreetMap's Nominatim. A place name goes to Nominatim first, because GeoSearch guesses badly on names: "Astoria" finds a power plant. If one service times out, the other one answers.
+Geocoding accepts "lat,lon" as is. A built-in list of 78 places, the landmarks above plus neighborhoods (Columbia University, Union Square, Times Square, DUMBO, Prospect Park, Barclays Center, NYU, Grand Central, and others) answers next, with or without a borough: "Union Square, Manhattan" and "Prospect Park, Brooklyn" work on the first try with no network call, and the page's suggestions offer the same list. Otherwise it tries an intersection in the street network ("116th St and Broadway"). A street address then goes to NYC Planning's GeoSearch, then OpenStreetMap's Nominatim. A place name goes to Nominatim first, because GeoSearch guesses badly on names: "Astoria" finds a power plant. If one service times out, the other one answers.
 
 ### Routing
 
@@ -642,7 +642,7 @@ The app runs on Google Cloud Run in project `agent-hijack`, region `us-east1`, b
 - public access, so graders can reach it
 - `SESSION_BUCKET=ave-a-to-b-sessions`, a Cloud Storage bucket in us-east1 with a 30-day delete rule; the service account can read and write objects in that bucket only
 
-To deploy by hand:
+A Cloud Build trigger, `ave-a-to-b-deploy-main`, builds with buildpacks and deploys with these settings on every push to `main`. The command below is the same deploy by hand:
 
 ```
 gcloud run deploy ave-a-to-b --source . --project agent-hijack --region us-east1 \
