@@ -627,7 +627,7 @@ uv run uvicorn app:app --reload
 
 Open http://127.0.0.1:8000. The Parquet files ship in `data/`, so no rebuild is needed.
 
-Tests: `uv run --group build pytest tests -q` (224 tests, about 55 seconds). The browser tests need Chrome through Playwright, a few tests call the geocoders, and no test calls a model.
+Tests: `uv run --group build pytest tests -q` (226 tests, about 55 seconds). The browser tests need Chrome through Playwright, a few tests call the geocoders, and no test calls a model.
 
 `POST /chat` takes `{"message": "...", "session_id": null}` and returns `{response, session_id, tool_calls, answer, map, verification}`. `response` is the full answer in markdown with every citation in brackets. Each entry in `tool_calls` has `agent`, `name`, `args`, and `result`. `GET /run` streams the same run as Server-Sent Events for the page, `GET /route` serves the slider, and `GET /reverse?lat=&lon=` turns a point picked on the map into an address, and `/session/{id}` gets, saves, or deletes a History session.
 

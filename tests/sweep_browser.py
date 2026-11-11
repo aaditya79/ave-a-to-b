@@ -69,6 +69,8 @@ with sync_playwright() as p:
         page.route("**/run?*", on_run)
         page.route("**/chat", lambda r: r.abort())
         page.route("**/followup", lambda r: r.abort())
+        # History saves to the session bucket; a local server has none (503), and a sweep shouldn't write to a live one
+        page.route("**/session/*", lambda r: r.fulfill(status=200, body='{"ok": true}', headers={"Content-Type": "application/json"}))
 
         page.goto(BASE)
         page.wait_for_function("exploreData !== null", timeout=30000)
@@ -105,6 +107,7 @@ with sync_playwright() as p:
             def chip(key=key):
                 page.click(f".examples .chip[data-key='{key}']")
                 page.wait_for_selector("#summary .support", timeout=15000)
+                page.wait_for_timeout(1500)  # the previous trip's summary stays up while the saved run replays
                 return (page.is_visible("#savedBanner") and page.text_content("#savedTag") == "Saved example"
                         and page.locator("#routeCards .card.route").count() >= 2), page.inner_text("#savedText")[:60]
             check(view, f"example chip {key}: saved banner and cards", chip)
@@ -208,6 +211,8 @@ with sync_playwright() as p:
 
         # --- Tooltips, timeline, trace wrapping ---
         def tooltips():
+            page.wait_for_timeout(1000)  # a scroll closes tips; let the smooth scroll to the summary finish
+            page.locator("#routeCards .info").first.scroll_into_view_if_needed()
             page.locator("#routeCards .info").first.click()
             page.wait_for_timeout(200)
             page.wait_for_timeout(300)

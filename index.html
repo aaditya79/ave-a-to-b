@@ -110,6 +110,20 @@
             .stat-strip > div + div { border-left: 1px solid rgba(255, 255, 255, 0.18); }
             .stat-strip b { font-size: 22px; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
             .stat-strip span { font-size: 13px; color: #c9d1dc; line-height: 1.3; }
+            @media (max-width: 413px) {
+                /* below this the time choice can't show "Evening, 6pm" beside Compare, so they stack */
+                #trip .row { flex-wrap: wrap; }
+                #trip .row > .field { flex: 1 1 100%; }
+                #trip .row > #go { flex: 1 1 100% !important; }
+            }
+            @media (max-width: 359px) {
+                /* the smallest phones: one info card per row, and the numbers strip fits */
+                .hero-cards { grid-template-columns: 1fr; }
+                .stat-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+                .stat-strip b { font-size: 15px; }
+                .stat-strip > div { padding: 8px; }
+                .stat-strip span { font-size: 12px; }
+            }
             .app.has-results .hero-more, .app.has-results .hero-sub { display: none; }
             .hero-more { display: grid; gap: 0; }
             .app.has-results .hero-title { font-size: 22px; }
@@ -2762,6 +2776,7 @@
                     means: "You made 3 rides that were at least half on greenways and other off-street paths.", howTo: "Make 3 rides at least half on greenways" },
             ];
             const amount = (b, n) => (b.decimals ? (Math.round(n * 10) / 10).toString() : String(n));
+            const per = (unit, need) => (need === 1 ? unit.replace(/\b(rides|crossings)\b/, (w) => w.slice(0, -1)) : unit); // "0 of 1 ride"
             let funTimer = null, funTurn = 0;
             function renderStats(list) {
                 clearInterval(funTimer);
@@ -2805,7 +2820,7 @@
                     if (!i.earned) token.insertAdjacentHTML("beforeend", `<span class="token-lock">${LOCK}</span>`);
                     const tile = el("button", { class: `badge-tile${i.earned ? "" : " locked"}`, type: "button", "data-badge": b.key, "aria-expanded": "false", "aria-controls": "badgeDetail",
                             title: i.earned ? b.name : b.howTo,
-                            "aria-label": `${b.name}: ${i.earned ? `earned ${monthDay(i.at)}` : `locked, ${amount(b, i.have)} of ${amount(b, i.need)} ${b.unit}`}`,
+                            "aria-label": `${b.name}: ${i.earned ? `earned ${monthDay(i.at)}` : `locked, ${amount(b, i.have)} of ${amount(b, i.need)} ${per(b.unit, b.need)}`}`,
                             onclick: () => {
                                 const open = tile.getAttribute("aria-expanded") === "true";
                                 for (const t of tile.parentNode.querySelectorAll(".badge-tile")) t.setAttribute("aria-expanded", "false");
@@ -2813,13 +2828,13 @@
                                 tile.setAttribute("aria-expanded", "true");
                                 detail.textContent = i.earned
                                     ? `${b.name}: ${b.means} Earned ${monthDay(i.at)}, with ${i.trip}. Its bullet is ${b.line}.`
-                                    : `${b.name}: ${b.howTo.toLowerCase().replace(/^./, (c) => c.toUpperCase())}. So far: ${amount(b, i.have)} of ${amount(b, i.need)} ${b.unit}. Only trips marked "I rode this" count.`;
+                                    : `${b.name}: ${b.howTo.toLowerCase().replace(/^./, (c) => c.toUpperCase())}. So far: ${amount(b, i.have)} of ${amount(b, i.need)} ${per(b.unit, b.need)}. Only trips marked "I rode this" count.`;
                                 detail.classList.remove("hidden");
                             } },
                         token,
                         el("span", { class: "badge-name" }, b.name),
                         i.earned ? el("span", { class: "badge-line" }, `Earned ${monthDay(i.at)}`)
-                            : [el("span", { class: "badge-line" }, `${amount(b, i.have)} of ${amount(b, i.need)} ${b.short}`),
+                            : [el("span", { class: "badge-line" }, `${amount(b, i.have)} of ${amount(b, i.need)} ${per(b.short, b.need)}`),
                                el("span", { class: "badge-bar", "aria-hidden": "true" }, el("span", { style: `width: ${Math.round((100 * i.have) / i.need)}%` }))]);
                     return tile;
                 });
@@ -2985,7 +3000,7 @@
                 closeRide();
                 closeLoop();
                 $("historyCard").classList.add("hidden");
-                if (state.map || state.saved || !$("progress").classList.contains("hidden")) {
+                if (state?.map || state?.saved || !$("progress").classList.contains("hidden")) { // state is null before any trip
                     if (source) source.close();
                     reset(false);
                     $("progress").classList.add("hidden");

@@ -736,7 +736,7 @@ def test_badges_are_subway_tokens_with_progress_dates_and_a_pop(page, base_url, 
         lock: !!t.querySelector('.token-lock'), line: t.querySelector('.badge-line').textContent, tip: t.title, top: Math.round(t.getBoundingClientRect().top) }))""")
     assert [(t["letter"], t["color"]) for t in tiles] == [("5", "rgb(0, 147, 60)"), ("B", "rgb(255, 99, 25)"), ("G", "rgb(108, 190, 69)")]
     assert all(t["locked"] and t["lock"] and t["round"] == "50%" and t["size"] == 64 for t in tiles)
-    assert [t["line"] for t in tiles] == ["0 of 5 boroughs", "0 of 1 crossings", "0 of 3 rides"] and tiles[0]["tip"] == "Ride in all five boroughs"
+    assert [t["line"] for t in tiles] == ["0 of 5 boroughs", "0 of 1 crossing", "0 of 3 rides"] and tiles[0]["tip"] == "Ride in all five boroughs"
     rows = page.evaluate("[...document.querySelectorAll('.badge-tile')].map((t) => Math.round(t.getBoundingClientRect().top))")
     assert rows.count(rows[0]) == 3  # three to a row on a phone
     # Marking rides: badges earned by that tap pop, then show their date
@@ -845,6 +845,7 @@ def test_badges_sort_earned_first_then_closest_and_count(page, base_url, monkeyp
     # closest first: Safety first and New streets 4 of 5 (80%), Marathon 20 of 26.2 (76%), then Lucky seven 4 of 7 ...
     assert locked[:3] == ["safetyFirst", "newStreets", "marathon"] and locked[3] == "luckySeven"
     assert page.inner_text(".badge-count") == "2 of 12 badges"
+    assert page.locator('.badge-tile[data-badge="aveAToB"] .badge-line').inner_text() == "0 of 1 ride"
     tile = page.locator('.badge-tile[data-badge="marathon"]')
     assert tile.locator(".badge-line").inner_text() == "20 of 26.2 mi" and tile.get_attribute("title") == "Ride 26.2 miles in all"
     n = page.locator('.badge-tile[data-badge="newStreets"] .bullet-mark')
@@ -853,3 +854,28 @@ def test_badges_sort_earned_first_then_closest_and_count(page, base_url, monkeyp
     assert colors == {"1": "#EE352E", "7": "#B933AD", "A": "#0039A6", "E": "#0039A6", "L": "#A7A9AC", "M": "#FF6319", "D": "#FF6319",
                       "S": "#808183", "N": "#FCCC0A", "5": "#00933C", "B": "#FF6319", "G": "#6CBE45"}
     page.evaluate("localStorage.clear()")
+
+
+def test_header_explore_link_works_before_any_trip(page, base_url):
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(base_url)
+    page.wait_for_function("exploreData !== null", timeout=30000)
+    page.uncheck("#exploreOn")
+    page.click("#navHistory")
+    page.click("#navExplore")
+    page.wait_for_timeout(300)
+    assert errors == [] and page.is_checked("#exploreOn") and not page.url.endswith("#history")
+
+
+def test_small_phones_no_sideways_scroll_and_time_labels_fit(page, base_url):
+    for width in (320, 390):
+        page = page.context.browser.new_page(viewport={"width": width, "height": 760}, is_mobile=True)
+        page.goto(base_url)
+        page.wait_for_timeout(500)
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width
+        fits = page.evaluate("""(() => { const s = document.getElementById('when'), c = document.createElement('canvas').getContext('2d'), cs = getComputedStyle(s);
+            c.font = cs.font; const text = Math.max(...[...s.options].map((o) => c.measureText(o.text).width));
+            return s.getBoundingClientRect().width >= text + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight); })()""")
+        assert fits, width
+        page.close()
