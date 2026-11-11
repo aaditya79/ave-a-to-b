@@ -230,12 +230,12 @@
             .limit-help .chip, .limit-help .btn { color: var(--navy); }
 
             /* --- Popular rides: even cards, details in one panel under the grid --- */
-            .ride-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-            .ride { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; background: #fff; text-align: left; display: grid; grid-template-columns: 1fr 72px; grid-template-rows: auto auto 1fr; column-gap: 10px; row-gap: 3px; height: 112px; box-sizing: border-box; overflow: hidden; font: inherit; color: inherit; }
+            .ride-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; align-items: stretch; } /* cards in a row match the tallest */
+            .ride { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; cursor: pointer; background: #fff; text-align: left; display: grid; grid-template-columns: minmax(0, 1fr) 72px; grid-template-rows: auto auto 1fr; column-gap: 10px; row-gap: 3px; min-height: 112px; box-sizing: border-box; font: inherit; color: inherit; } /* grows for a two-line name, so the pill is never cut off */
             .ride:hover, .ride.active { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue-soft); }
             .ride h3 { margin: 0; font-size: 15px; line-height: 1.25; grid-column: 1; }
             .ride .meta { font-size: 13px; color: var(--muted); grid-column: 1; }
-            .ride .tag { grid-column: 1; align-self: end; justify-self: start; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #eef1f5; color: var(--navy); white-space: nowrap; }
+            .ride .tag { grid-column: 1; align-self: end; justify-self: start; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: #eef1f5; color: var(--navy); max-width: 100%; } /* wraps only on the narrowest cards */
             .ride .tag.badge { background: var(--navy); color: #fff; }
             .ride svg { grid-column: 2; grid-row: 1 / 4; align-self: center; width: 72px; height: 44px; }
             .ride-detail { margin-top: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: #fff; position: relative; display: grid; gap: 6px; font-size: 14px; }
@@ -2277,7 +2277,7 @@
                         onclick: () => (openRide === r.name ? closeRide() : showRide(r)) },
                     el("h3", {}, r.name),
                     el("div", { class: "meta" }, `${r.miles} mi · about ${r.minutes} min · ${r.kind}`),
-                    r.label ? el("span", { class: "tag badge" }, RIDE_BADGE[r.label]) : el("span", { class: "tag" }, `${Math.round(r.protected_share * 100)}% protected or off-street`),
+                    r.label ? el("span", { class: "tag badge" }, RIDE_BADGE[r.label]) : el("span", { class: "tag" }, `${Math.round(r.protected_share * 100)}% protected or off\u2011street`) /* the hyphen doesn't break */,
                     rideThumb(r.thumb));
                 return card;
             }

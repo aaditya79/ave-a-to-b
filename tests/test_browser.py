@@ -879,3 +879,28 @@ def test_small_phones_no_sideways_scroll_and_time_labels_fit(page, base_url):
             return s.getBoundingClientRect().width >= text + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight); })()""")
         assert fits, width
         page.close()
+
+
+
+def test_popular_ride_cards_never_clip_and_rows_match(page, base_url):
+    for width in (320, 390, 768, 1440):
+        tab = page.context.browser.new_page(viewport={"width": width, "height": 900}, is_mobile=width < 900)
+        tab.goto(base_url)
+        tab.wait_for_selector("#rideList .ride")
+        cards = tab.evaluate("""[...document.querySelectorAll('#rideList .ride')].map((c) => {
+            const r = c.getBoundingClientRect(), tag = c.querySelector('.tag').getBoundingClientRect(), svg = c.querySelector('svg').getBoundingClientRect(),
+                  kids = [...c.children].map((k) => k.getBoundingClientRect());
+            return {name: c.dataset.ride, top: Math.round(r.top), height: r.height, clipped: c.scrollHeight > c.clientHeight + 1,
+                    inside: kids.every((k) => k.bottom <= r.bottom - 4 && k.right <= r.right + 0.5),
+                    tagBelowTitle: tag.top >= c.querySelector('h3').getBoundingClientRect().bottom,
+                    svgRight: svg.left > tag.left && svg.right <= r.right, svgCentered: Math.abs((svg.top + svg.bottom) / 2 - (r.top + r.bottom) / 2) <= 2};
+        })""")
+        assert len(cards) >= 8
+        for c in cards:
+            assert not c["clipped"] and c["inside"] and c["tagBelowTitle"], (width, c)
+            assert c["svgRight"] and c["svgCentered"], (width, c)
+        rows = {}
+        for c in cards:
+            rows.setdefault(c["top"], []).append(c["height"])
+        assert all(max(h) - min(h) < 1 for h in rows.values()), (width, rows)
+        tab.close()
