@@ -464,10 +464,16 @@ def test_every_hotspot_marker_sits_on_a_drawn_route(page, base_url, zoom):
         assert s["truePx"] <= 6, s  # and on a line as drawn (shared streets shift up to 5 px)
         assert s["nudge"] <= 12.6, s  # the marker moved at most about 12 px
         assert s["leader"] or s["nudge"] <= 1, s  # with a leader line back to its true point when it moved
-    # The recommended route is drawn last, on top of the others and of the selected route's risk coloring
-    page.evaluate("selectRoute(distinctRoutes(state.map).find((r) => !isRecommended(r)).route_ref)")
-    on_top = page.evaluate("routeLayer.getLayers().at(-1) === state.layers[distinctRoutes(state.map).find(isRecommended).route_ref]")
-    assert on_top
+    # A selected route is drawn last and thickest, so its risk coloring shows in full; the recommended route sits under it, thinner
+    other = page.evaluate("distinctRoutes(state.map).find((r) => !isRecommended(r)).route_ref")
+    page.evaluate(f"selectRoute('{other}')")
+    widths = "(ref) => Math.max(...state.layers[ref].getLayers().map((l) => l.options.color !== '#fff' && l.options.color !== '#0b1f3a' ? l.options.weight : 0))"
+    rec = page.evaluate("distinctRoutes(state.map).find(isRecommended).route_ref")
+    assert page.evaluate(f"routeLayer.getLayers().at(-1) === state.layers['{other}']")
+    assert page.evaluate(f"({widths})('{other}')") > page.evaluate(f"({widths})('{rec}')")
+    assert "selected, thicker line" in page.inner_text("#legendRoutes")
+    page.evaluate(f"selectRoute('{rec}')")  # back to the recommended route: on top again
+    assert page.evaluate(f"routeLayer.getLayers().at(-1) === state.layers['{rec}']") and "recommended, thicker line" in page.inner_text("#legendRoutes")
 
 
 def test_routes_on_the_same_street_are_drawn_side_by_side(page, base_url):
@@ -698,6 +704,7 @@ def test_the_loop_start_is_a_place_routing_knows():
 
 def test_compare_routes_is_clickable_after_ride_here_and_says_why_when_it_is_not(page, base_url):
     page.goto(base_url + "/#popular")
+    page.reload()  # from "/" (where an earlier test can leave the page) the hash alone doesn't reload it
     page.wait_for_selector(".ride")
     page.locator(".ride", has_text="Hudson River Greenway").click()
     page.locator("#rideDetail button", has_text="Ride here").click()
@@ -874,6 +881,10 @@ def test_small_phones_no_sideways_scroll_and_time_labels_fit(page, base_url):
         page.goto(base_url)
         page.wait_for_timeout(500)
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), width
+        name = page.locator(".sign-name")  # the name stays beside the A and B bullets, smaller
+        assert name.is_visible() and name.inner_text() == "Ave A to B", width
+        assert float(name.evaluate("(n) => getComputedStyle(n).fontSize").rstrip("px")) < 24
+        assert name.bounding_box()["x"] + name.bounding_box()["width"] < page.locator("#signMenu").bounding_box()["x"] - 8
         fits = page.evaluate("""(() => { const s = document.getElementById('when'), c = document.createElement('canvas').getContext('2d'), cs = getComputedStyle(s);
             c.font = cs.font; const text = Math.max(...[...s.options].map((o) => c.measureText(o.text).width));
             return s.getBoundingClientRect().width >= text + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight); })()""")
@@ -904,3 +915,271 @@ def test_popular_ride_cards_never_clip_and_rows_match(page, base_url):
             rows.setdefault(c["top"], []).append(c["height"])
         assert all(max(h) - min(h) < 1 for h in rows.values()), (width, rows)
         tab.close()
+
+
+def test_run_a_fresh_one_asks_for_a_new_live_run(page, base_url):
+    page.goto(base_url)
+    page.evaluate("localStorage.clear()")
+    body = saved_stream()
+    asked = []
+
+    def on_run(route):
+        asked.append(route.request.url)
+        route.fulfill(status=200, headers={"Content-Type": "text/event-stream"}, body=body)
+    page.route("**/run?*", on_run)
+    page.fill("#start", "Prospect Heights, Brooklyn")
+    page.fill("#end", "DUMBO, Brooklyn")
+    page.click("#go")  # Compare routes: may reuse the server's cached answer
+    page.wait_for_function("localStorage.getItem('aveHistory')", timeout=15000)
+    assert "fresh=" not in asked[-1]
+    page.reload()  # reopens from History, no request
+    page.wait_for_selector("#summary .support")
+    assert page.text_content("#savedTag") == "From your History" and len(asked) == 1
+    with page.expect_request("**/run?*") as rerun:
+        page.click("#savedRerun")  # Run a fresh one: past History and the server cache
+    assert "fresh=1" in rerun.value.url
+    page.wait_for_selector("#progress.finished", timeout=15000)  # the replayed run ends (and its stream closes) before unrouting
+    page.unroute("**/run?*")
+    page.evaluate("localStorage.clear()")
+
+
+def test_a_rewrite_shows_its_own_step_after_the_check(page, base_url):
+    page.goto(base_url)
+    page.route("**/run?*", lambda r: r.fulfill(status=200, headers={"Content-Type": "text/event-stream"}, body=""))
+    page.evaluate("ask('I bike from A to B.')")
+    lines = "[...document.querySelectorAll('#statusLines li')].filter((l) => !l.hidden).map((l) => [l.dataset.line, l.className, l.textContent])"
+    send = lambda e: page.evaluate(f"onEvent({json.dumps(e)})")
+    assert [x[0] for x in page.evaluate(lines)] == ["routes", "research", "write", "check"]  # no fix step unless needed
+    send({"type": "activity", "agent": "Writer", "text": "started"})
+    send({"type": "activity", "agent": "Verifier", "text": "started"})
+    send({"type": "progress", "step": "check", "numbers": 8, "reruns": 9, "ok": False, "problems": 1})
+    send({"type": "activity", "agent": "Writer", "text": "started"})  # the rewrite
+    now = page.evaluate(lines)
+    assert [x[0] for x in now] == ["routes", "research", "write", "check", "fix"]
+    assert now[2][1:] == ["done", "Answer written"] and now[3][1] == "done"
+    assert now[4] == ["fix", "active", "Fixing what the Verifier found"]
+    assert [x for x in now if x[1] == "active"] == [now[4]]  # only the fix step spins
+    page.evaluate("source.close(); source = { close() {} }")  # the real stream closes, so it can't reconnect later
+    send({"type": "done", "response": "", "map": None, "clarify": False})
+    assert page.evaluate(lines)[4] == ["fix", "done", "Fixed what the Verifier found"]
+    page.unroute("**/run?*")
+
+
+INTERACTIVE_IN_SUMMARY = "[...document.querySelectorAll('summary')].filter((s) => s.querySelector('button, a[href], input, select, textarea, [tabindex]')).map((s) => s.textContent.trim().slice(0, 40))"
+
+
+def test_no_interactive_element_inside_a_summary(page, base_url):
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector("#summary .support")
+    page.wait_for_timeout(500)
+    assert page.evaluate(INTERACTIVE_IN_SUMMARY) == []
+    toggle = page.locator(".timing-toggle").first
+    grid = page.locator(".timing-grid").first
+    assert toggle.get_attribute("aria-expanded") == "true" and grid.is_visible()
+    assert toggle.evaluate("(b) => b.nextElementSibling.classList.contains('info')")  # the (i) sits beside it
+    toggle.click()
+    assert toggle.get_attribute("aria-expanded") == "false" and grid.is_hidden()
+    toggle.press("Enter")
+    assert grid.is_visible()
+
+
+MAP_SIZE = "(() => { const r = document.getElementById('map').getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height), map.getSize().x, map.getSize().y]; })()"
+
+
+def test_map_redraws_and_refits_after_a_resize(page, base_url):
+    tab = page.context.browser.new_page(viewport={"width": 1440, "height": 900})
+    tab.goto(base_url + "/?example=columbia-union-sq")
+    tab.wait_for_selector("#summary .support")
+    tab.wait_for_timeout(800)
+    all_routes = "map.getBounds().contains(L.polyline(Object.values(state.map.routes).flatMap((r) => r.line.flat())).getBounds())"
+    for width, height in [(390, 844), (1440, 900), (844, 390)]:  # to a phone, back, and a phone turned sideways
+        tab.set_viewport_size({"width": width, "height": height})
+        tab.wait_for_timeout(900)
+        w, h, lw, lh = tab.evaluate(MAP_SIZE)
+        assert h > 100 and (lw, lh) == (w, h), (width, w, h, lw, lh)  # Leaflet measured the box it is in
+        assert tab.evaluate(all_routes), width
+    # Only the two pins, no routes: both in view, apart
+    tab.goto(base_url)
+    tab.wait_for_timeout(800)
+    tab.evaluate("setPin('start', [40.8075, -73.9626]); setPin('end', [40.7359, -73.9911]); map.setView([40.75, -73.97], 11)")
+    tab.set_viewport_size({"width": 390, "height": 844})
+    tab.wait_for_timeout(900)
+    a, b = tab.evaluate("[pins.start, pins.end].map((p) => map.latLngToContainerPoint(p.getLatLng())).map((p) => [p.x, p.y])")
+    assert tab.evaluate("map.getBounds().contains(pins.start.getLatLng()) && map.getBounds().contains(pins.end.getLatLng())")
+    assert ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 > 80  # not stacked on each other
+    tab.close()
+
+
+def test_a_hotspot_on_a_pin_moves_off_it_with_a_leader_line(page, base_url):
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector("#summary .support")
+    page.wait_for_timeout(500)
+    for which in ("start", "end"):
+        out = page.evaluate(f"""(() => {{
+            const s = state.map.hotspots.find((h) => h.marker), at = pins.{which}.getLatLng();
+            s.lat = at.lat + 0.00002; s.lon = at.lng;  // a stretch a couple of pixels from the pin
+            layoutSpots();
+            const px = (p) => map.latLngToContainerPoint(p);
+            const others = state.map.hotspots.filter((h) => h.marker).map((h) => px(h.marker.getLatLng()));
+            const leaders = leaderLayer.getLayers().filter((l) => l.getLatLngs).map((l) => l.getLatLngs()[0]);
+            return {{ gap: px(s.marker.getLatLng()).distanceTo(px(at)), leader: leaders.some((p) => p.lat === s.lat && p.lng === s.lon),
+                      clear: Math.min(...[pins.start, pins.end].flatMap((p) => others.map((o) => o.distanceTo(px(p.getLatLng()))))) }};
+        }})()""")
+        assert out["gap"] >= 29 and out["leader"] and out["clear"] >= 29, (which, out)
+
+
+def test_explore_panel_folds_and_starts_folded_under_1200(page, base_url):
+    for width, folded in [(1440, False), (1100, True), (390, True)]:
+        tab = page.context.browser.new_page(viewport={"width": width, "height": 900})
+        tab.goto(base_url)
+        tab.wait_for_function("exploreData !== null", timeout=30000)
+        assert (tab.get_attribute("#exploreFold", "aria-expanded") == "false") == folded, width
+        assert tab.is_visible("#exploreMini") == folded and tab.is_visible("#exploreBody") == (not folded)
+        if folded:
+            assert tab.inner_text("#exploreMini").split() == ["Stand", "out", "Protected", "Painted"]
+            assert tab.locator("#explore").bounding_box()["height"] < 80  # a compact key, not the full list
+        tab.click("#exploreFold")
+        assert tab.is_visible("#exploreBody") == folded
+        assert tab.inner_text("#exploreNote") == ("Red lines are the 60 corridors where crashes that hurt a cyclist since 2021 are "
+                                                  "clearly above similar streets. Click one for its numbers.") or not folded
+        tab.uncheck("#exploreOn")  # off: only the switch shows
+        assert tab.is_hidden("#exploreBody") and tab.is_hidden("#exploreMini") and tab.is_hidden("#exploreFold")
+        tab.close()
+
+
+def test_map_key_starts_collapsed_on_a_phone_and_folds_on_resize(page, base_url):
+    tab = page.context.browser.new_page(viewport={"width": 390, "height": 844}, is_mobile=True)
+    tab.goto(base_url + "/?example=columbia-union-sq")
+    tab.wait_for_selector("#summary .support")
+    assert tab.evaluate("document.getElementById('legend').open") is False
+    tab.close()
+    tab = page.context.browser.new_page(viewport={"width": 1440, "height": 900})
+    tab.goto(base_url + "/?example=columbia-union-sq")
+    tab.wait_for_selector("#summary .support")
+    assert tab.evaluate("document.getElementById('legend').open") is True
+    tab.set_viewport_size({"width": 390, "height": 844})
+    tab.wait_for_timeout(300)
+    assert tab.evaluate("document.getElementById('legend').open") is False
+    tab.close()
+
+
+LABEL_CHECK = """(() => {
+  const rect = (n) => { const r = n.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom }; };
+  const gap = (a, b) => Math.max(a.l - b.r, b.l - a.r, a.t - b.b, b.t - a.b);  // < 0: overlapping
+  const labels = [...document.querySelectorAll('.route-label')].map(rect);
+  const pinsAt = [...document.querySelectorAll('.map-pin')].map(rect);
+  const overlays = ['#savedMapTag', '#explore', '.leaflet-control-zoom', '#legend'].map((s) => document.querySelector(s))
+      .filter((n) => n && n.offsetParent && !n.classList.contains('hidden')).map((n) => ({ id: n.id || n.className, ...rect(n) }));
+  const pairs = [];
+  for (let i = 0; i < labels.length; i++) for (let j = i + 1; j < labels.length; j++) pairs.push(gap(labels[i], labels[j]));
+  return { labels: labels.length, minLabelGap: pairs.length ? Math.min(...pairs) : 99,
+           underOverlay: [...labels, ...pinsAt].flatMap((x) => overlays.filter((o) => gap(x, o) < 0).map((o) => o.id)) };
+})()"""
+
+
+@pytest.mark.parametrize("width", [1440, 390])
+def test_route_labels_keep_apart_and_clear_of_the_map_boxes(page, base_url, width):
+    tab = page.context.browser.new_page(viewport={"width": width, "height": 900 if width > 900 else 844}, is_mobile=width < 900)
+    for key in ["columbia-union-sq", "prospect-heights-dumbo", "astoria-times-sq"]:
+        tab.goto(base_url + f"/?example={key}")
+        tab.wait_for_selector("#summary .support")
+        tab.wait_for_timeout(900)
+        assert tab.is_visible("#savedMapTag")
+        for zoom_by in (0, 1):
+            if zoom_by:
+                tab.evaluate("map.setZoom(map.getZoom() + 1, { animate: false })")
+                tab.wait_for_timeout(500)
+            out = tab.evaluate(LABEL_CHECK)
+            assert out["labels"] >= 1 and out["minLabelGap"] >= 6, (key, zoom_by, out)
+            if not zoom_by:  # the fitted view: nothing under the saved tag or the other boxes
+                assert out["underOverlay"] == [], (key, out)
+            else:  # zoomed in, routes can run under the boxes, but labels never do
+                labels_only = tab.evaluate(LABEL_CHECK.replace("[...labels, ...pinsAt]", "labels"))
+                assert labels_only["underOverlay"] == [], (key, labels_only)
+    tab.close()
+
+
+def test_a_popular_ride_clears_leftover_pins(page, base_url):
+    page.goto(base_url)
+    page.wait_for_selector("#rideList .ride")
+    page.evaluate("setPin('start', [40.8075, -73.9626]); setPin('end', [40.7359, -73.9911])")  # as Pick on map leaves them
+    assert page.locator(".map-pin").count() == 2
+    page.locator(".ride", has_text="Hudson River Greenway").click()
+    page.wait_for_timeout(300)
+    assert page.locator(".map-pin").count() == 0 and page.evaluate("pins.start === null && pins.end === null")
+    page.goto(base_url + "/?example=columbia-union-sq")  # pins from a finished trip
+    page.wait_for_selector("#summary .support")
+    assert page.locator(".map-pin").count() == 2
+    page.locator(".ride", has_text="Ocean Parkway path").click()
+    page.wait_for_timeout(300)
+    assert page.locator(".map-pin").count() == 0
+
+
+def test_google_maps_link_uses_the_typed_places_and_three_turns(page, base_url):
+    from urllib.parse import parse_qs, urlparse
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector("#summary .support")
+    link = page.locator("a", has_text="Open in Google Maps").first
+    q = parse_qs(urlparse(link.get_attribute("href")).query)
+    assert q["origin"] == ["Columbia University, New York, NY"] and q["destination"] == ["Union Square, New York, NY"]
+    assert 1 <= len(q["waypoints"][0].split("|")) <= 3 and q["travelmode"] == ["bicycling"]
+    assert link.get_attribute("title") == "Google may show nearby place names for the turn points."
+    assert "approximate" in link.inner_text()
+    cases = {"Columbia University": "Columbia University, New York, NY", "Union Square, Manhattan": "Union Square, New York, NY",
+             "DUMBO, Brooklyn": "DUMBO, Brooklyn, NY", "Yankee Stadium, the Bronx": "Yankee Stadium, the Bronx, NY",
+             "Astoria, Queens, NY": "Astoria, Queens, NY", "40.7359, -73.9911": "40.7,-73.9"}
+    for typed, want in cases.items():
+        assert page.evaluate(f"placeQuery({json.dumps(typed)}, {{ lat: 40.7, lon: -73.9 }})") == want, typed
+    turns = page.evaluate("mainTurns([[1,1],[2,2],[3,3],[4,4],[5,5],[6,6],[7,7]])")
+    assert turns == [[2, 2], [4, 4], [6, 6]]
+    assert page.evaluate("mainTurns([[1,1],[2,2]])") == [[1, 1], [2, 2]]
+
+
+def test_intro_cards_are_three_across_or_stacked_never_two_and_one(page, base_url):
+    tab = page.context.browser.new_page(viewport={"width": 1440, "height": 900})
+    tab.goto(base_url)
+    seen = set()
+    for width in (320, 390, 500, 600, 700, 800, 960, 961, 1000, 1100, 1200, 1300, 1440, 1920):
+        tab.set_viewport_size({"width": width, "height": 900})
+        tab.wait_for_timeout(100)
+        tops = tab.evaluate("[...document.querySelectorAll('.hero-card')].map((c) => Math.round(c.getBoundingClientRect().top))")
+        widths = tab.evaluate("[...document.querySelectorAll('.hero-card')].map((c) => Math.round(c.getBoundingClientRect().width))")
+        rows = len(set(tops))
+        assert len(tops) == 3 and rows in (1, 3), (width, tops)
+        assert max(widths) - min(widths) <= 1, (width, widths)  # equal columns
+        seen.add(rows)
+    assert seen == {1, 3}
+    tab.close()
+
+
+def test_timeline_findings_show_markdown_not_asterisks(page, base_url):
+    page.goto(base_url)
+    out = page.evaluate("""(() => {
+        const box = tlText("### Crash findings\\n**Broadway** had *7* crashes on `route:ab12cd34`.\\n- 5th Ave: **3** crashes\\n<img src=x onerror=alert(1)> stays text\\n2 * 3 * 4 is math, not italics");
+        return { text: box.textContent, html: box.innerHTML, bold: [...box.querySelectorAll('b')].map((b) => b.textContent),
+                 italic: [...box.querySelectorAll('i')].map((b) => b.textContent), code: [...box.querySelectorAll('code')].map((b) => b.textContent),
+                 imgs: box.querySelectorAll('img').length };
+    })()""")
+    assert "**" not in out["text"] and "###" not in out["text"] and "`" not in out["text"]
+    assert out["bold"] == ["Crash findings", "Broadway", "3"] and out["italic"] == ["7"] and out["code"] == ["route:ab12cd34"]
+    assert "• 5th Ave: 3 crashes" in out["text"] and out["imgs"] == 0 and "<img src=x" in out["text"]
+    assert "2 * 3 * 4 is math" in out["text"]
+    # In the timeline of a saved run, no raw ** anywhere
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector("#summary .support")
+    page.evaluate("document.getElementById('traceCard').open = true")
+    texts = page.eval_on_selector_all(".tl-text", "ns => ns.map((n) => n.textContent)")
+    assert texts and not any("**" in t for t in texts)
+
+
+def test_every_form_field_has_an_id_or_name(page, base_url):
+    no_label = "[...document.querySelectorAll('input, select, textarea')].filter((n) => !n.id && !n.name).map((n) => n.outerHTML.slice(0, 80))"
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector("#summary .support")
+    assert page.evaluate(no_label) == []
+    page.evaluate(f"localStorage.setItem('aveHistory', JSON.stringify({json.dumps(RIDES)}))")
+    page.goto(base_url)
+    page.click("#navHistory")
+    page.wait_for_selector(".badge-tile")
+    assert page.evaluate(no_label) == []
+    page.evaluate("localStorage.clear()")

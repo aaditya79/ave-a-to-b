@@ -533,6 +533,10 @@ number in the sentences with them: crash counts, ranges, minutes, relative risks
 years. The route table, standout stretches, before/after results, and limits are built by code from the
 same tools, so don't check those.
 
+Time: extra_minutes_vs_fastest is one way. A figure the draft gives per day ("daily", "a day", "round
+trip") is the round trip, 2 x the one-way figure; the time table after the route options lists both. A
+daily figure that equals the round-trip number is correct: don't halve it.
+
 Also flag: a number with no source, a number that no result supports, the word "dangerous", a lane said
 to have worked or failed, a per-rider rate or personal odds, painted lanes called more dangerous than no
 lane, a route called safest when safety_label isn't 'safest', a route called safest without the words
@@ -770,9 +774,14 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
         draft = render_sentences(written)
         hooks.handoff("Writer", "Verifier", "draft", draft)
         fresh = recheck(draft, hooks)
-        prompt = f"Route options:\n{route_brief(run.routes)}\n\nDraft:\n{draft}\n\nFresh tool results:\n\n{fresh}"
+        prompt = (f"Route options:\n{route_brief(run.routes)}\n\n{time_table(run.routes)}\n\n"
+                  f"Draft:\n{draft}\n\nFresh tool results:\n\n{fresh}")
         verified = await asyncio.wait_for(Runner.run(verifier, prompt, hooks=hooks, max_turns=2), min(VERIFY_SECONDS, time_left(started)))
         check = verified.final_output
+        kept = drop_round_trip_flags(check.problems or [], draft, run.routes)
+        if len(kept) < len(check.problems or []):
+            hooks.activity("Verifier", f"{len(check.problems) - len(kept)} flag(s) set aside: a daily figure is the round trip, 2 x the one-way minutes")
+            check = Check(ok=check.ok or not kept, problems=kept)
     except Exception as e:  # out of time or a bad reply: say the check didn't finish, don't block the answer
         hooks.activity("Verifier", f"could not finish: {type(e).__name__}")
     late = time.monotonic() - started > FIX_DEADLINE_SECONDS
@@ -805,6 +814,37 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
     return {"response": render_markdown(written, map_, unverified, check is None, run.unchecked), "clarify": False,
             "answer": written.model_dump(), "map": map_, "unverified": unverified, "unchecked_parts": run.unchecked,
             "verification": check.model_dump() if check is not None else None}
+
+
+# --- Time differences: one way and a day, round trip ---
+
+
+def time_table(routes: dict) -> str:
+    """Both figures for every route, so a daily round-trip number in a draft can be checked as such."""
+    lines = ["Extra minutes vs. the fastest route (computed in code):"]
+    for key, r in routes["routes"].items():
+        one = round(r["extra_minutes_vs_fastest"], 1)
+        lines.append(f"- {LABELS.get(key, key)}: {one:g} one way; {round(one * 2, 1):g} a day, round trip")
+    return "\n".join(lines)
+
+
+DAILY_WORDS = re.compile(r"\b(daily|a day|per day|each day|every day|round[- ]trip)\b", re.I)
+
+
+def _numbers(text: str) -> set[float]:
+    return {round(float(n.replace(",", "").rstrip("%")), 1) for n in NUMBER.findall(text)}
+
+
+def drop_round_trip_flags(problems: list[str], draft: str, routes: dict) -> list[str]:
+    """A Verifier flag that would halve a daily figure the draft got right (2 x the one-way extra minutes, stated
+    as daily or round trip) is set aside. A flag on a daily figure that is wrong stays."""
+    daily_in_draft = set().union(*(_numbers(CITED.sub("", s)) for s in re.split(r"(?<=[.!?])\s+|\n", draft) if DAILY_WORDS.search(s)))
+    pairs = [(round(r["extra_minutes_vs_fastest"], 1), round(round(r["extra_minutes_vs_fastest"], 1) * 2, 1)) for r in routes["routes"].values()]
+    pairs = [(one, day) for one, day in pairs if one != day]
+    def halves_a_right_daily(problem: str) -> bool:
+        said = _numbers(problem)
+        return any({one, day} <= said and day in daily_in_draft and one not in daily_in_draft for one, day in pairs)
+    return [p for p in problems if not halves_a_right_daily(p)]
 
 
 # --- The parts of the answer that come from code ---
@@ -1200,6 +1240,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     messages: list[dict] | None = None  # [{"role": "user" | "assistant", "content": "..."}], oldest first
     context: Trip | None = None
+    fresh: bool = False  # "Run a fresh one": skip the 24-hour answer cache (the new answer replaces the cached one)
 
 
 def lead_input(message: str, history: list[dict], trip: Trip | None) -> str:
@@ -1270,7 +1311,7 @@ def favicon():
 @app.post("/chat")
 async def chat(request: ChatRequest, http: Request):
     key = cache_key(request.message, request.messages, request.context)
-    hit = cached(key)
+    hit = None if request.fresh else cached(key)
     # A message the guardrail declines costs no model call, so it counts only toward the hourly limit
     if refusal := over_limit(http, new=hit is None and guard(request.message) is None):
         return JSONResponse({"response": refusal, "session_id": request.session_id, "tool_calls": [], "map": None,
@@ -1301,7 +1342,7 @@ async def chat(request: ChatRequest, http: Request):
 
 
 @app.get("/run")
-async def run(message: str, http: Request, session_id: str | None = None, messages: str = "", context: str = ""):
+async def run(message: str, http: Request, session_id: str | None = None, messages: str = "", context: str = "", fresh: bool = False):
     """The same pipeline as /chat, streamed as Server-Sent Events for the page."""
     try:
         sent = json.loads(messages) if messages else None
@@ -1309,7 +1350,7 @@ async def run(message: str, http: Request, session_id: str | None = None, messag
     except (ValueError, TypeError):
         sent, trip = None, None
     key = cache_key(message, sent, trip)
-    hit = cached(key)
+    hit = None if fresh else cached(key)  # fresh: a new live run, even for a trip answered in the last 24 hours
     if refusal := over_limit(http, new=hit is None and guard(message) is None):  # as in /chat
         async def refused():
             yield f"data: {json.dumps({'type': 'error', 'message': refusal, 'limit': refusal == DAILY_MESSAGE})}\n\n"

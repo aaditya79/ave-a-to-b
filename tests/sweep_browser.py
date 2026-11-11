@@ -235,8 +235,8 @@ with sync_playwright() as p:
         def explore():
             page.goto(BASE)
             page.wait_for_function("exploreData !== null", timeout=30000)
-            if phone:
-                page.evaluate("document.getElementById('explore').open = true")
+            if page.get_attribute("#exploreFold", "aria-expanded") == "false":
+                page.click("#exploreFold")  # unfold the layer list
             boxes = page.locator("#explore input[type=checkbox]")
             n = boxes.count()
             toggled = 0
