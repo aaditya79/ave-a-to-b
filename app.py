@@ -488,16 +488,19 @@ summary: 1 or 2 short sentences under the headline, which code writes and the pa
   repeat the headline's minutes or percent. Say why, from the findings: which lanes it uses, or which
   standout stretches or busy streets it avoids. Name a route by its label, with its streets exactly as in
   route names when it helps, e.g. "It uses the protected lanes on Columbus Ave and the Central Park
-  loop, and skips 5th Ave." Follow safety_label:
+  loop, and skips 5th Ave."
+  The recommendation is decided in code and given to you under "Decision". Recommend only that route,
+  by its label, and never recommend or tell the rider to take any other route. Name routes by label
+  ("the Balanced route"), not as "the recommended route" alone. By safety_label:
   - safest: call that route "the safest of these three routes", never just "the safest route".
-  - about_equally_safe: say the routes in routes_about_equally_safe are about equally safe, and
-    recommend recommended_route because it is faster. Don't call any route safest.
+  - about_equally_safe: say the routes listed as about equally safe are about equally safe, and that
+    the recommended one is the fastest of them. Don't call any route safest.
   - depends_on_assumption: say which route has lower risk depends on assumptions about where people
     ride that the data can't settle. Give the tradeoff. Don't recommend a route or call one safest.
   Use the risk at the assumed setting. Routes with the same route_ref are one route.
-tradeoff: 1 or 2 sentences on time versus safety in daily terms: extra minutes per day for a round
-  trip (extra minutes × 2) against the change in risk. Say the risk is lower at the half and double
-  settings too only if it is.
+tradeoff: 1 or 2 sentences on time versus safety in daily terms: the extra minutes a day, round trip,
+  exactly as the time table gives them, against the change in risk. Say the risk is lower at the half
+  and double settings too only if it is.
 notes: up to 4 short sentences with other useful findings for this rider, such as the main crash causes
   at their time of day, the miles on protected lanes, blocked-bike-lane complaints, or lower confidence
   where Citi Bike data doesn't cover a route. Skip what the other parts already show. Can be empty.
@@ -539,8 +542,12 @@ daily figure that equals the round-trip number is correct: don't halve it.
 
 Also flag: a number with no source, a number that no result supports, the word "dangerous", a lane said
 to have worked or failed, a per-rider rate or personal odds, painted lanes called more dangerous than no
-lane, a route called safest when safety_label isn't 'safest', a route called safest without the words
-"of these three routes", or a recommendation that doesn't follow safety_label.
+lane, a route called safest when safety_label isn't 'safest', or a route called safest without the words
+"of these three routes".
+
+Recommendation: the code has decided which route to recommend (see "Decision"). Flag every sentence that
+recommends, or tells the rider to take, any route other than that one, with the fix "recommend the <decided>
+route". A draft that recommends the decided route is correct; never ask for a different route.
 
 Return ok=true with no problems if everything matches. Otherwise list each problem in one line: what the
 draft says, what the results say, and the fix.""",
@@ -758,6 +765,7 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
     shown = map_routes(run.routes)
     names = {k: f"the {LABELS[k]} route (via {r['via']})" for k, r in shown["routes"].items()}
     material = (f"Question: {question}\n\nHeadline (shown first, in bold): {shown['headline']}\n\n"
+                f"{decision_brief(run.routes)}\n\n"
                 f"Route names: {json.dumps(names)}\n\nRoute options:\n{route_brief(run.routes)}\n\n"
                 f"Standout stretches (shown to the rider as a numbered list):\n{json.dumps(facts['hotspots_for_writer'])}\n\n"
                 f"Before/after results (shown as cards):\n{json.dumps(facts['before_after_for_writer'])}\n\n"
@@ -765,7 +773,7 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
                 + (f"\n\nCould not be checked (say so, and don't fill in numbers for these):\n" + "\n".join(f"- {u}" for u in run.unchecked)
                    if run.unchecked else ""))
     hooks.handoff("Lead", "Writer", "brief", material)
-    written = (await asyncio.wait_for(Runner.run(writer, material, hooks=hooks), time_left(started))).final_output
+    written = name_the_recommended((await asyncio.wait_for(Runner.run(writer, material, hooks=hooks), time_left(started))).final_output, run.routes)
 
     # 4. Verify, then fix once
     check = None
@@ -774,23 +782,34 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
         draft = render_sentences(written)
         hooks.handoff("Writer", "Verifier", "draft", draft)
         fresh = recheck(draft, hooks)
-        prompt = (f"Route options:\n{route_brief(run.routes)}\n\n{time_table(run.routes)}\n\n"
+        prompt = (f"Route options:\n{route_brief(run.routes)}\n\n{time_table(run.routes)}\n\n{decision_brief(run.routes)}\n\n"
                   f"Draft:\n{draft}\n\nFresh tool results:\n\n{fresh}")
         verified = await asyncio.wait_for(Runner.run(verifier, prompt, hooks=hooks, max_turns=2), min(VERIFY_SECONDS, time_left(started)))
         check = verified.final_output
-        kept = drop_round_trip_flags(check.problems or [], draft, run.routes)
+        kept = screen_flags(check.problems or [], draft, run.routes)
         if len(kept) < len(check.problems or []):
-            hooks.activity("Verifier", f"{len(check.problems) - len(kept)} flag(s) set aside: a daily figure is the round trip, 2 x the one-way minutes")
+            hooks.activity("Verifier", f"{len(check.problems) - len(kept)} flag(s) set aside: a daily figure that is the round trip "
+                                       "(2 x the one-way minutes), or a fix asking for a route other than the code's recommendation")
             check = Check(ok=check.ok or not kept, problems=kept)
     except Exception as e:  # out of time or a bad reply: say the check didn't finish, don't block the answer
         hooks.activity("Verifier", f"could not finish: {type(e).__name__}")
+    finished = check is not None  # did the Verifier itself finish
+    # Code's own check of the recommendation, whether or not the Verifier finished: any sentence recommending another route goes back
+    wrong = wrong_recommendations(written, run.routes)
+    if wrong:
+        d = decision(run.routes)
+        flags = [f'"{t}" recommends a route other than the code\'s decision. Fix: recommend the {d["label"]} route.' if d["key"]
+                 else f'"{t}" recommends a route, but no route is recommended here. Fix: don\'t recommend a route.' for t in wrong]
+        hooks.activity("Verifier", f"code check: {len(wrong)} sentence(s) recommend a route other than the {d['label'] or 'decision'}")
+        problems = [*(check.problems or []), *flags] if check is not None else flags
+        check = Check(ok=False, problems=problems)
     late = time.monotonic() - started > FIX_DEADLINE_SECONDS
     if check is not None:
         hooks.emit({"type": "progress", "step": "check", "numbers": len(NUMBER.findall(CITED.sub("", draft))),
                     "reruns": sum(c["agent"] == "Verifier" for c in hooks.tool_calls), "ok": bool(check.ok or not check.problems),
                     "problems": len(check.problems or [])})
     unverified = None
-    if check is None:
+    if not finished and check is None:
         hooks.handoff("Verifier", "Rider", "unchecked", "The check did not finish in time, so the answer went out unchecked.")
     elif check.ok or not check.problems:
         hooks.handoff("Verifier", "Rider", "ok", "Every cited number matched a fresh run of the tools.")
@@ -804,16 +823,124 @@ async def answer(question: str, hooks: TraceHooks, trip: "Trip | None" = None) -
         fix = (f"{material}\n\nYour answer:\n{written.model_dump_json()}\n\nA verifier re-ran the tools and found "
                f"these problems. Fix them and return the full corrected answer:\n{problems}")
         try:
-            written = (await asyncio.wait_for(Runner.run(writer, fix, hooks=hooks), time_left(started))).final_output
+            written = name_the_recommended((await asyncio.wait_for(Runner.run(writer, fix, hooks=hooks), time_left(started))).final_output, run.routes)
             hooks.handoff("Writer", "Rider", "fixed", render_sentences(written))
         except asyncio.TimeoutError:  # out of time for the rewrite: the first draft goes out with the flags shown
             unverified = check.problems
             hooks.handoff("Verifier", "Rider", "flags", "Out of time for a rewrite, so these flags go out with the answer:\n" + problems)
+    if wrong_recommendations(written, run.routes):  # the backstop: the final answer never names another route as recommended
+        written = code_recommendation(written, run.routes)
+        hooks.activity("Pipeline", f"backstop: replaced sentences recommending a route other than the {decision(run.routes)['label']}")
+        if unverified:
+            unverified = [p for p in unverified if "code's decision" not in p and "no route is recommended" not in p] or None
     hooks.activity("Pipeline", f"finished in {time.monotonic() - started:.0f} s")
     map_ = {**map_routes(run.routes), "hotspots": facts["hotspots"], "before_after": facts["before_after"]}
-    return {"response": render_markdown(written, map_, unverified, check is None, run.unchecked), "clarify": False,
+    return {"response": render_markdown(written, map_, unverified, not finished, run.unchecked), "clarify": False,
             "answer": written.model_dump(), "map": map_, "unverified": unverified, "unchecked_parts": run.unchecked,
             "verification": check.model_dump() if check is not None else None}
+
+
+# --- The recommendation: decided once, in code (tools._verdict), and used by every part of the page ---
+
+
+def decision(routes: dict) -> dict:
+    """The one recommendation for a trip, as tools.route_options decided it: the headline, the cards, the map label,
+    the Writer's brief, the Verifier's check, and the final backstop all read it from here."""
+    key = routes.get("recommended_route")
+    rows = routes["routes"]
+    ref = rows[key]["route_ref"] if key else None
+    same = [k for k, r in rows.items() if ref and r["route_ref"] == ref]  # identical routes are one route
+    return {"key": key, "keys": same, "label": LABELS[key] if key else None, "route_ref": ref,
+            "via": (rows[key].get("via") or via(rows[key], list(rows.values()))) if key else None, "safety_label": routes["safety_label"],
+            "equal": [LABELS[k] for k in routes.get("routes_about_equally_safe") or []]}
+
+
+def decision_brief(routes: dict) -> str:
+    d = decision(routes)
+    if not d["key"]:
+        return ("Decision (made in code, final): no route is recommended, because which route has lower risk depends "
+                "on assumptions about where people ride. Don't recommend or tell the rider to take any route.")
+    also = [LABELS[k] for k in d["keys"] if k != d["key"]]
+    lines = [f"Decision (made in code, final): recommend the {d['label']} route ({d['route_ref']}"
+             + (f", via {d['via']}" if d["via"] else "") + ")" + (f", which is the same route as {' and '.join(also)}" if also else "") + ".",
+             f"safety_label: {d['safety_label']}."]
+    if d["safety_label"] == "about_equally_safe":
+        lines.append(f"About equally safe (risk ranges overlap the lowest-risk route's under at least one rider-share setting): "
+                     f"{', '.join(d['equal'])}. The recommended route is the fastest of these.")
+    lines.append(f"Never recommend, or tell the rider to take, any route other than the {d['label']} route.")
+    return "\n".join(lines)
+
+
+ROUTE_NAME = r"(Fastest|Balanced|Lowest[- ]risk)"
+NAME_KEY = {"fastest": "fastest", "balanced": "balanced", "lowest risk": "lowest_risk"}
+# "we recommend the Fastest route", "Take the Balanced route", "the Fastest route is recommended", "recommended route (Fastest"
+RECOMMENDS = [re.compile(rf"\brecommend(?:s|ed|ing)?\s+(?:taking\s+|using\s+)?(?:the\s+)?{ROUTE_NAME}\b", re.I),
+              re.compile(rf"\b{ROUTE_NAME}\s+route\b[^.;]*?\b(?:is|as)\s+(?:the\s+)?recommended\b", re.I),
+              re.compile(rf"\brecommended\s+route\s*\(?\s*(?:is\s+)?(?:the\s+)?{ROUTE_NAME}\b", re.I)]
+TELLS_TO_TAKE = re.compile(rf"(?:^|[.;:]\s*|\bso\s+|\bwe\s+suggest\s+|\byou\s+should\s+)(?:take|choose|pick|go\s+with|ride)\s+the\s+{ROUTE_NAME}\b", re.I)
+
+
+def recommended_names(text: str, in_summary: bool) -> set[str]:
+    """The route keys a sentence recommends or tells the rider to take."""
+    found = [m.group(1) for rx in RECOMMENDS for m in rx.finditer(text)]
+    if in_summary:
+        found += [m.group(1) for m in TELLS_TO_TAKE.finditer(text)]
+    return {NAME_KEY[f.lower().replace("-", " ")] for f in found}
+
+
+def wrong_recommendations(written: Answer, routes: dict) -> list[str]:
+    """Sentences that recommend (or tell the rider to take) a route other than the code's decision."""
+    d = decision(routes)
+    allowed = set(d["keys"])
+    bad = []
+    for section, sentences in (("summary", written.summary), ("tradeoff", written.tradeoff), ("notes", written.notes)):
+        for x in sentences:
+            named = recommended_names(x.text, section == "summary")
+            if named - allowed:
+                bad.append(x.text)
+    return bad
+
+
+def name_the_recommended(written: Answer, routes: dict) -> Answer:
+    """"the recommended route" becomes "the recommended <Label> route", so the Verifier checks its numbers
+    against the right route."""
+    d = decision(routes)
+    if not d["key"]:
+        return written
+    rx = re.compile(r"\b(the\s+)recommended\s+route\b(?!\s*\()", re.I)
+    for x in [*written.summary, *written.tradeoff, *written.notes]:
+        x.text = rx.sub(lambda m: f"{m.group(1)}recommended {d['label']} route", x.text)
+    return written
+
+
+def code_recommendation(written: Answer, routes: dict) -> Answer:
+    """Last resort, after the Writer's own fixes: drop sentences recommending another route, and state the decision."""
+    d = decision(routes)
+    bad = set(wrong_recommendations(written, routes))
+    keep = lambda xs: [x for x in xs if x.text not in bad]
+    summary = keep(written.summary)
+    if d["key"] and not any(d["label"].lower() in x.text.lower() for x in summary):
+        why = " It is the fastest of the routes that are about equally safe." if d["safety_label"] == "about_equally_safe" else ""
+        summary.insert(0, Sentence(text=f"We recommend the {d['label']} route" + (f" via {d['via']}" if d["via"] else "") + f".{why}",
+                                   sources=[d["route_ref"]]))
+    return Answer(summary=summary, tradeoff=keep(written.tradeoff), notes=keep(written.notes))
+
+
+def screen_flags(problems: list[str], draft: str, routes: dict) -> list[str]:
+    """Verifier flags the code sets aside: halving a correct daily figure, or asking for a route other than the decision."""
+    kept = drop_round_trip_flags(problems, draft, routes)
+    d = decision(routes)
+    allowed = set(d["keys"])
+    def asks_for_another(problem: str) -> bool:
+        fix = re.split(r"\bfix\b\s*:?", problem, flags=re.I)[-1] if re.search(r"\bfix\b", problem, re.I) else problem
+        named = recommended_names(fix, True)
+        return bool(named) and not named & allowed
+    return [p for p in kept if not asks_for_another(p)]
+
+
+def daily_minutes(extra_one_way: float) -> float:
+    """Extra minutes a day, round trip: 2 x the one-way figure rounded to one decimal. Every part of the page uses it."""
+    return round(round(extra_one_way, 1) * 2, 1)
 
 
 # --- Time differences: one way and a day, round trip ---
@@ -824,7 +951,7 @@ def time_table(routes: dict) -> str:
     lines = ["Extra minutes vs. the fastest route (computed in code):"]
     for key, r in routes["routes"].items():
         one = round(r["extra_minutes_vs_fastest"], 1)
-        lines.append(f"- {LABELS.get(key, key)}: {one:g} one way; {round(one * 2, 1):g} a day, round trip")
+        lines.append(f"- {LABELS.get(key, key)}: {one:g} one way; {daily_minutes(one):g} a day, round trip")
     return "\n".join(lines)
 
 
@@ -974,7 +1101,7 @@ def render_markdown(written: Answer, map_: dict, unverified: list[str] | None, u
         names = " / ".join(LABELS[n] for n, x in map_["routes"].items() if x["route_ref"] == r["route_ref"])
         risk = r["relative_risk_vs_fastest"]
         compared = "baseline" if name == "fastest" else f"{pct(risk['assumed'])} ({pct(risk['half'])} to {pct(risk['double'])})"
-        rows.append(f"| {names} (via {r['via']}) | {r['minutes']} | {round(r['extra_minutes_vs_fastest'] * 2, 1)} | "
+        rows.append(f"| {names} (via {r['via']}) | {r['minutes']} | {daily_minutes(r['extra_minutes_vs_fastest']):g} | "
                     f"{compared} | [{r['route_ref']}] |")
     table = ("| Route | Minutes | Extra minutes a day, round trip | Risk vs. Fastest (assumed; half to double) | Source |\n"
              "|---|---:|---:|---|---|\n" + "\n".join(rows))
@@ -1463,7 +1590,7 @@ def followup_facts(map_: dict, when: str | None) -> dict:
         routes[LABELS[key]] = {
             "via": r["via"], "minutes": round(r["minutes"], 1), "miles": r["miles"],
             "extra_minutes_each_way_vs_fastest": round(r["extra_minutes_vs_fastest"], 1),
-            "extra_minutes_a_day_round_trip": round(r["extra_minutes_vs_fastest"] * 2, 1),
+            "extra_minutes_a_day_round_trip": daily_minutes(r["extra_minutes_vs_fastest"]),
             "crash_risk_vs_fastest": "baseline" if key == "fastest" else f"{pct(risk['assumed'])} (range {pct(risk['half'])} to {pct(risk['double'])})",
             "miles_by_lane": r["miles_by_lane"], "crashes_since_2021": t["crashes"],
             "crashes_by_time_of_day": {name: sum(t["by_hour"][h] for h in hours) for name, hours in WINDOWS.items()},

@@ -1183,3 +1183,16 @@ def test_every_form_field_has_an_id_or_name(page, base_url):
     page.wait_for_selector(".badge-tile")
     assert page.evaluate(no_label) == []
     page.evaluate("localStorage.clear()")
+
+
+def test_badge_names_the_equal_routes_and_cards_match_the_text_minutes(page, base_url):
+    page.goto(base_url + "/?example=columbia-union-sq")
+    page.wait_for_selector("#summary .support")
+    data = page.evaluate("state.map")
+    assert data["safety_label"] == "about_equally_safe"
+    assert "About equally safe: Balanced and Lowest risk" in page.inner_text("#summary .badge")
+    for r in data["routes"].values():
+        if r["extra_minutes_vs_fastest"] and r["route_ref"] != data["routes"]["fastest"]["route_ref"]:
+            daily = round(round(r["extra_minutes_vs_fastest"], 1) * 2, 1)  # app.daily_minutes
+            card = page.locator(f'.card.route[data-ref="{r["route_ref"]}"] .stats')
+            assert f"+{daily:g} min" in card.inner_text()

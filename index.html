@@ -773,7 +773,7 @@
                 range: "Nobody counts riders on most streets, so we estimate how many use streets without bike lanes. We redo the math at half and at double that estimate. The range shows the lowest and highest result.",
                 count: "Crash counts go up and down by chance. The range covers 95% of that chance variation: the count plus or minus two times its square root, or for counts under 10, the exact range for a count of rare events (0 crashes gives 0 to 3.7).",
                 similar: "Streets with the same kind of bike lane and the same type of road in the same borough. Comparing with them keeps a busy avenue from being judged against a quiet side street.",
-                equal: "The difference in risk between these routes is smaller than the uncertainty in the data, so we recommend the faster one.",
+                equal: "These routes' risk ranges overlap the lowest-risk route's under at least one rider-share setting, so the difference is smaller than the uncertainty in the data. We recommend the fastest of them.",
                 depends: "Which route has lower risk flips depending on how many riders we assume use streets without bike lanes. The data can't settle it, so no route is called safest.",
                 safest: "This route has the lowest risk under every assumption, and its range doesn't overlap the other routes' ranges.",
                 extra: "Extra minutes for a round trip each day, compared with the fastest route, at 9.5 mph on flat ground.",
@@ -1509,7 +1509,7 @@
                         el("div", { class: "via" }, viaOf(r)),
                         el("div", { class: "stats" },
                             stat(`${Math.round(r.minutes)} min`, `${r.miles} miles`),
-                            stat(isFastest ? "+0 min" : `+${Math.round(r.extra_minutes_vs_fastest * 2)} min`, ["a day, round trip", info("extra")]),
+                            stat(isFastest ? "+0 min" : `+${dailyMinutes(r.extra_minutes_vs_fastest)} min`, ["a day, round trip", info("extra")]),
                             stat(isFastest ? "Baseline" : pct(risk.assumed), [isFastest ? "the others compare to this" : "crash risk vs. fastest", info("risk")])),
                         isFastest ? null : el("div", { class: "sure" }, `Range: ${pct(risk.half)} to ${pct(risk.double)}, depending on how many people ride streets without `, el("span", { style: "white-space:nowrap" }, "lanes. ", info("range"))),
                         recommended ? rideTotals(r.miles, r.minutes, "one way") : null,
@@ -1926,10 +1926,18 @@
             }
 
             // --- Answer sections ---
+            // Extra minutes a day, round trip: 2 x the one-way figure rounded to one decimal (app.daily_minutes), so cards and text match
+            function dailyMinutes(oneWay) { return Number((Math.round(oneWay * 10) / 10 * 2).toFixed(1)); }
+            // The routes the code counts as about equally safe, by label, each distinct route once
+            function equalNames(data) {
+                const keys = data.routes_about_equally_safe || [];
+                const names = distinctRoutes(data).filter((r) => r.keys.some((k) => keys.includes(k))).map(nameOf);
+                return names.length > 1 ? names.slice(0, -1).join(", ") + " and " + names.at(-1) : names.join("");
+            }
             function showSummary(answer) {
                 const data = state.map;
                 const label = data.safety_label === "safest" && !goodNews(data) ? ["Safest of these three routes", "safest"]
-                    : data.safety_label === "about_equally_safe" ? ["About equally safe", "equal"]
+                    : data.safety_label === "about_equally_safe" ? [`About equally safe: ${equalNames(data)}`, "equal"]
                     : data.safety_label === "depends_on_assumption" ? ["Depends on assumptions", "depends"] : null;
                 $("summary").classList.remove("hidden");
                 $("summary").replaceChildren(...[

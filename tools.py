@@ -699,8 +699,9 @@ def route_options(start: str, end: str) -> dict:
 LABEL_NOTES = {
     "safest": "One route has the lowest risk at all three rider-share settings, and its range doesn't overlap the "
               "others. Call it 'the safest of these three routes', never just 'the safest route'.",
-    "about_equally_safe": "The routes' risk ranges overlap under at least one rider-share setting, so they are about "
-                          "equally safe. Recommend the faster route. Don't call any route safest.",
+    "about_equally_safe": "The routes in routes_about_equally_safe have risk ranges that overlap the lowest-risk route's "
+                          "under at least one rider-share setting, so they are about equally safe. recommended_route, "
+                          "the fastest of them, is recommended. Don't call any route safest.",
     "depends_on_assumption": "Which route has lower risk reverses between rider-share settings, beyond the ranges. "
                              "It depends on an assumption about where people ride that the data can't settle. "
                              "Don't call any route safest.",
@@ -723,7 +724,10 @@ def _verdict(routes: list[list[int]]) -> dict:
     """Which of the shown routes is safest, by index. Identical routes count once.
     safest: one route wins at every setting and its range sits below every other route's.
     depends_on_assumption: two routes swap places between settings, with ranges apart both times.
-    about_equally_safe: anything else; the quickest of the routes tied with the lowest is recommended."""
+    about_equally_safe: anything else. The routes tied with the lowest are those whose range overlaps the
+      lowest-risk route's under at least one setting; the quickest of them is recommended. (If no other route
+      overlapped under any setting, the lowest would be clearly lowest everywhere: safest. So a tie always has
+      two or more routes.)"""
     distinct = [i for i, p in enumerate(routes) if p not in routes[:i]]
     ranges = {s: {i: _risk_range(routes[i], s) for i in distinct} for s in SETTINGS}
     winners = {s: min(distinct, key=lambda i: RISK[s][routes[i]].sum()) for s in SETTINGS}
@@ -736,8 +740,8 @@ def _verdict(routes: list[list[int]]) -> dict:
             i, j = winners[s1], winners[s2]
             if i != j and clear(s1, i, j) and clear(s2, j, i):
                 return {"label": "depends_on_assumption", "recommended": None, "tied": []}
-    # Routes no setting puts clearly behind its winner are tied with it; take the quickest of those.
-    tied = [i for i in distinct if not any(clear(s, winners[s], i) for s in SETTINGS)]
+    # Routes whose range overlaps the lowest's under at least one setting are tied with it; take the quickest.
+    tied = [i for i in distinct if any(not clear(s, winners[s], i) for s in SETTINGS)]
     faster = min(tied, key=lambda i: MINUTES[routes[i]].sum())
     return {"label": "about_equally_safe", "recommended": faster, "tied": tied}
 
